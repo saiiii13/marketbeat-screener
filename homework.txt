@@ -1,0 +1,442 @@
+================================================================================
+HOMEWORK: SINE WAVES, ETFs, AND PENNY STOCKS
+A working reference for the MarketBeat screener project
+Written 2026-09-22
+================================================================================
+
+This file is notes, not code. Nothing here is imported or executed by the
+screener. Numbers quoted about "the screener" come from the runs on 2026-09-22
+against 18,337 stocks pulled from a MarketBeat All-Access account.
+
+Nothing here is investment advice.
+
+
+================================================================================
+PART 1 — SINE WAVES IN TRADING
+================================================================================
+
+1.1 THE IDEA
+--------------------------------------------------------------------------------
+The premise is that price contains repeating cycles: a security oscillates
+around some trend at a roughly regular period, so if you can measure the period
+and the phase, you can anticipate turns instead of reacting to them.
+
+Mathematically you are asserting that price can be usefully written as
+
+    price(t) = trend(t) + A * sin(2*pi*t/T + phase) + noise(t)
+
+where T is the cycle length, A the amplitude, and phase tells you where in the
+cycle you currently sit. Everything in cycle analysis is an attempt to estimate
+T, A, and phase from a finite, noisy, non-stationary sample.
+
+That last phrase is the whole problem. Markets are non-stationary: T and A drift
+over time, and the "noise" is not well-behaved. A technique that recovers a clean
+sine from a radio signal will happily recover an equally clean, equally
+meaningless sine from a random walk.
+
+
+1.2 BOUNDED OSCILLATORS (RSI, STOCHASTICS)
+--------------------------------------------------------------------------------
+These are the practical, everyday descendants of cycle thinking. They do not
+claim to find a period; they rescale recent price action into a fixed range so
+that "high" and "low" have consistent meaning across securities.
+
+RSI (Relative Strength Index), Wilder, 14 periods by default:
+
+    RS  = average gain over N periods / average loss over N periods
+    RSI = 100 - 100 / (1 + RS)
+
+Bounded 0-100 by construction. Traditional reading: >70 overbought, <30
+oversold. That traditional reading is also where most people go wrong, because
+in a strong trend RSI parks above 70 for weeks and every "overbought" sale is a
+mistake.
+
+The screener uses RSI differently, and deliberately: it scores the 50-70 band
+highest (screener/score.py, momentum_score). The reasoning is that 50 is where
+control changes hands between buyers and sellers, so 50-70 means an uptrend that
+is established but not yet stretched. Above 75 the screener flags "Overbought"
+rather than rewarding it. This is a momentum-continuation reading, not a
+mean-reversion one, and it suits a one-month horizon.
+
+Stochastics (Lane) ask a different question — where does the close sit inside
+the recent range?
+
+    %K = 100 * (close - lowest_low_N) / (highest_high_N - lowest_low_N)
+    %D = moving average of %K (typically 3 periods)
+
+%K is jumpy; %D smooths it; crossovers are the signal. Stochastics are more
+responsive than RSI and correspondingly noisier. In a range-bound market they
+are genuinely useful. In a trend they whipsaw.
+
+Both are bounded oscillators: they compress an unbounded quantity (price) into a
+fixed interval. That compression is what makes them comparable across a
+17,000-stock universe, and it is also what makes them lossy. A stock at RSI 65
+and $1,043 (MU) and a stock at RSI 65 and $1.20 are not equivalent situations,
+but the oscillator says they are.
+
+
+1.3 DETRENDED PRICE OSCILLATOR (DPO)
+--------------------------------------------------------------------------------
+If you want to see cycles, the trend is in the way — it dominates the variance
+and hides everything else. DPO removes it:
+
+    DPO = price(t - (N/2 + 1)) - SMA_N(t)
+
+The shift is the point. By comparing a past price to a centred moving average,
+DPO strips the dominant trend and leaves shorter oscillation. It is explicitly
+NOT a momentum indicator and is not meant to be used for current-bar signals —
+the lookback shift means the most recent values are not defined the way traders
+often assume.
+
+What DPO is good for: measuring the typical distance between peaks, i.e.
+estimating cycle length T empirically. What it is bad for: timing entries, since
+by construction it is looking backwards by half a cycle.
+
+
+1.4 HURST CYCLES
+--------------------------------------------------------------------------------
+J.M. Hurst's framework (1970s) proposes that price is the sum of several nested
+cycles of different lengths, roughly harmonically related — a long cycle
+containing shorter ones, each about half the length of the one above. The
+practical claims are:
+
+  - Summation: observed price is the sum of these components plus trend.
+  - Harmonicity: periods relate by small integer ratios (often 2:1).
+  - Synchronicity: troughs of different cycles tend to align.
+  - Proportionality: longer cycles have larger amplitude.
+
+Traders using this framework look for nested troughs lining up and treat those
+alignments as high-probability turning points.
+
+The honest assessment: the framework is internally coherent and produces
+beautiful charts in hindsight. Its weak point is that with enough nested
+components of adjustable length and phase, you can fit any series whatsoever.
+The fit is not evidence.
+
+Separately, note that "Hurst cycles" (J.M. Hurst, trader) and the "Hurst
+exponent" (H.E. Hurst, hydrologist) are different things by different people.
+The Hurst exponent H measures long-memory in a series: H = 0.5 is a random walk,
+H > 0.5 trending/persistent, H < 0.5 mean-reverting. The exponent is a
+legitimate statistical measure with real standard errors. It is also noisy on
+short financial samples and drifts over time. Do not conflate the two.
+
+
+1.5 WHERE SEASONALITY ENDS AND CURVE-FITTING BEGINS
+--------------------------------------------------------------------------------
+This is the part that matters, so it gets its own section.
+
+There ARE real calendar effects with plausible mechanisms:
+
+  - Earnings cycles. Quarterly reporting is a genuine 63-trading-day rhythm
+    imposed by regulation. Post-earnings-announcement drift is one of the most
+    replicated anomalies in the literature.
+  - Tax-loss selling in December and the January reversal that follows.
+  - Index rebalancing on scheduled dates, forcing mechanical flows.
+  - Dividend and ex-dividend dates.
+  - Sector seasonality with a physical cause: natural gas demand in winter,
+    retail in Q4, agricultural cycles.
+  - Option expiry and quarterly triple-witching.
+
+What these share is a MECHANISM you can state in one sentence without using the
+word "cycle." That is the test.
+
+A pattern is probably curve-fitting when:
+
+  - The period was discovered by searching many periods and keeping the best.
+    If you test 100 cycle lengths at the 5% level, five will look significant by
+    construction. Almost nobody reports how many they tested.
+  - The cycle length needs re-tuning every few months to keep working. A real
+    period does not drift to fit the data.
+  - It only works on one instrument and vanishes on similar ones.
+  - It only works on the sample where it was found. Out-of-sample decay from
+    "significant" to "nothing" is the norm for discovered cycles.
+  - The explanation invokes market psychology in general terms rather than a
+    specific, datable, repeating event.
+  - Removing a handful of observations destroys it.
+
+The asymmetry worth internalising: a real cycle needs a calendar or an
+institutional forcing function. "Prices tend to oscillate" is not a mechanism —
+it is a description of any mean-reverting noise process, including one you
+generated with a random number generator.
+
+Relevant to this project: the screener uses no cycle detection at all. RSI
+appears only as a momentum band (50-70 good, >75 flagged), and the one-month
+horizon is justified by post-upgrade analyst drift — a mechanism with a date
+attached — not by any wave-fitting. That was a deliberate choice.
+
+
+================================================================================
+PART 2 — ETFs
+================================================================================
+
+2.1 STRUCTURE
+--------------------------------------------------------------------------------
+An ETF is a fund whose shares trade on an exchange. The mechanism that makes it
+work is creation/redemption: Authorised Participants (large institutions) can
+exchange a basket of the underlying securities for a block of ETF shares
+("creation unit", typically 25,000-50,000 shares) and vice versa.
+
+That mechanism is an arbitrage loop. If the ETF trades above the value of its
+holdings (NAV), an AP buys the basket, creates shares, and sells them, pushing
+the price back down. This is why ETF prices track NAV closely, and why they can
+break: in a stressed market, if the underlying stops trading or becomes
+impossible to price, the arbitrage loop stalls and the ETF can trade at a
+meaningful discount or premium. That happened in corporate bond ETFs in March
+2020.
+
+Legal structures differ and it matters for taxes and mechanics:
+  - Open-end funds (most equity ETFs) — can reinvest dividends, lend securities.
+  - Unit Investment Trusts (SPY, QQQ historically) — cannot reinvest dividends,
+    which creates a small cash drag.
+  - Grantor trusts (commodity funds like GLD) — hold the physical asset.
+  - ETNs — unsecured debt of the issuer, NOT a fund. You carry issuer credit
+    risk. If the bank fails, your ETN is a claim in bankruptcy.
+
+
+2.2 EXPENSE RATIOS
+--------------------------------------------------------------------------------
+Quoted annually, accrued daily out of NAV. You never see a bill; the fund just
+shrinks slightly relative to its index.
+
+Typical ranges as of 2026:
+  - Broad market index (VOO, VTI, SPY):        0.03% - 0.09%
+  - Sector and factor funds:                   0.10% - 0.50%
+  - Actively managed:                          0.35% - 1.00%
+  - Leveraged / inverse:                       0.85% - 1.10%
+  - Niche thematic:                            0.50% - 0.95%
+
+For a one-month hold, the expense ratio is nearly irrelevant: 0.95% annual is
+about 0.08% over a month, which is smaller than a typical bid-ask spread on a
+thin fund. Expense ratios matter for years-long holds; spreads matter for
+short ones. Optimising the wrong one is a common beginner error.
+
+
+2.3 LIQUIDITY AND SPREADS
+--------------------------------------------------------------------------------
+The counter-intuitive fact: an ETF's tradable liquidity is not its own volume.
+It is the liquidity of what it holds, because APs can always create more shares
+from the underlying basket.
+
+A fund with 20,000 shares/day of screen volume that holds S&P 500 constituents
+can absorb a large order at a fair price. A fund with the same screen volume
+holding illiquid small-cap foreign equities cannot.
+
+What actually drives the spread you pay:
+  - Liquidity of the underlying basket (dominant factor).
+  - Whether the underlying market is open. An ETF on Japanese equities trading
+    at 2pm New York has a stale basket; market makers widen spreads to cover the
+    risk, which is why international ETF spreads blow out outside local hours.
+  - Volatility — spreads widen with uncertainty.
+  - Time of day. The open and the close are the worst. The first and last 15
+    minutes routinely carry spreads several times the midday level.
+  - Competition among market makers.
+
+Practical rules: use limit orders, never market orders, on anything but the most
+liquid funds. Avoid the first and last 15 minutes. Compare the quote to the
+fund's iNAV where published. For a fund quoting 0.30% spread, a round trip costs
+0.60% before you are right about anything — on a one-month trade that is a
+meaningful hurdle.
+
+
+2.4 LEVERAGED AND INVERSE DECAY
+--------------------------------------------------------------------------------
+This is the single most misunderstood product category in retail investing, so
+here is the arithmetic.
+
+A 3x ETF promises 3x the DAILY return, and it rebalances its exposure every day
+to maintain that ratio. Compounding daily returns is not the same as multiplying
+a period return by three.
+
+Worked example. Index at 100, 3x fund at 100.
+  Day 1: index +10% -> 110.   Fund +30% -> 130.
+  Day 2: index -9.09% -> 100. Fund -27.27% -> 94.55.
+
+The index is exactly flat. The fund lost 5.45%. Nobody made a mistake; no fee
+caused it. It is the geometry of compounding, and it is called volatility decay
+or beta slippage.
+
+The loss scales roughly with the square of volatility and linearly with time:
+
+    drag ≈ (L^2 - L) / 2 * sigma^2 * t
+
+where L is leverage and sigma is volatility. At 3x leverage in a 40% volatility
+environment, that is roughly 48% annualised drag against you in a flat market.
+
+Consequences:
+  - In a choppy sideways market, leveraged funds bleed in both directions.
+    Both a 3x long and a 3x short on the same index can lose money in the same
+    month. This is normal, not a malfunction.
+  - In a smooth sustained trend they can OUTPERFORM their multiple, because
+    daily rebalancing compounds gains.
+  - Holding periods should be days, not months. The prospectuses say this
+    explicitly and are ignored.
+  - Inverse funds have the same problem plus a structural headwind, since
+    equities drift up over long horizons.
+
+For the one-month horizon this screener targets, leveraged ETFs are a poor fit.
+
+
+2.5 HOW ETFs DIFFER FROM SINGLE STOCKS FOR SHORT-TERM TRADING
+--------------------------------------------------------------------------------
+  - No idiosyncratic catalyst. A diversified ETF cannot gap 30% on a trial
+    result or a buyout. The fat right tail that makes single-stock momentum
+    attractive is diversified away, along with the fat left tail.
+  - No analyst coverage. Nobody issues a price target on SPY. This is why the
+    screener's entire selection mechanism — consensus ratings, upgrades,
+    target upside — is inapplicable to ETFs. The screener found roughly 2,500
+    NYSEARCA and BATS listings in the 18,337-stock universe, and essentially
+    none of them can pass an analyst-based filter, because the data does not
+    exist.
+  - Earnings dates do not apply, though the underlying holdings' earnings do
+    move the fund.
+  - Lower volatility at equal notional, from diversification.
+  - Tracking error and roll costs in commodity and volatility products can
+    dominate the thesis. VIX futures ETFs in contango lose to roll regardless
+    of direction.
+  - Tax treatment varies by structure (commodities, currencies, and ETNs all
+    differ from equity funds).
+
+Implication for this project: ETFs need a completely separate scoring model
+based on flows, momentum, spread, and tracking quality. Scoring them with the
+current analyst-driven model would produce nonsense, which is exactly why
+`explore` treats them as their own category and ranks them on price/technical
+signals only.
+
+
+================================================================================
+PART 3 — PENNY STOCKS
+================================================================================
+
+3.1 OTC VERSUS LISTED
+--------------------------------------------------------------------------------
+"Penny stock" is about price (SEC: under $5), not venue. The venue is a separate
+and more important axis.
+
+LISTED (NYSE, NASDAQ, NYSE American):
+  - Must meet initial and continued listing standards: minimum price, market
+    cap, shareholder count, corporate governance.
+  - Full SEC reporting.
+  - Sub-$1 for 30 consecutive days triggers a deficiency notice; failure to cure
+    means delisting to OTC. This is why you see reverse splits — they are often
+    a listing-compliance manoeuvre, not a vote of confidence.
+
+OTC — tiered, and the tier tells you most of what you need:
+  - OTCQX     — highest tier, audited financials, no shells, no sub-penny.
+  - OTCQB     — venture tier, $0.01 minimum bid, annual verification.
+  - Pink      — subdivided by disclosure: Current, Limited, or No Information.
+                "Pink No Information" means the company tells you nothing.
+  - Expert Market — broker-dealers cannot publicly quote these; retail
+                effectively cannot buy. Often where failed companies end up.
+
+In the screener's universe, OTCMKTS was the single largest exchange bucket
+(~2,500 listings). Almost none of it is investable by the criteria in this
+project.
+
+
+3.2 FLOAT AND DILUTION
+--------------------------------------------------------------------------------
+Float = shares actually available to trade, i.e. shares outstanding minus
+insider and restricted holdings. Small float means violent moves on modest
+volume, in both directions.
+
+The structural problem with the sub-$1 world is dilution, and the common
+mechanism is the toxic convertible:
+
+  - Company needs cash and cannot raise conventionally.
+  - It issues a convertible note to a specialist financier.
+  - The note converts at a DISCOUNT to market price — often 20-40% below
+    whatever the price is at conversion time.
+  - The financier converts, immediately sells into the market, price falls.
+  - The lower price means the next conversion yields MORE shares.
+  - Repeat.
+
+This is a death spiral, and it is self-reinforcing by design. The share count
+can go from 50 million to several billion inside a year. Every technical signal
+on the chart is noise next to a financing structure that mechanically issues
+shares into any rally.
+
+How to check before believing any chart: read the share count trend across the
+last several 10-Qs. If shares outstanding are compounding, nothing else matters.
+Also check for a recent reverse split — a 1-for-100 reverse split followed by a
+price collapse back to the old level is the signature of a company that has done
+this repeatedly.
+
+
+3.3 LIQUIDITY TRAPS
+--------------------------------------------------------------------------------
+The recurring pattern: entering is easy, exiting is not.
+
+  - Spreads. A stock quoted 0.0021 x 0.0025 carries a ~19% spread. You are
+    down 19% the instant you fill, and you need a 23% move just to break even.
+  - Displayed size is tiny. The bid might be 5,000 shares. Your 500,000-share
+    position cannot exit at the quote; you walk the book down.
+  - Market orders are dangerous — you can fill far from the last print.
+  - Halts. The SEC can suspend trading for two weeks on public-interest
+    grounds, usually after promotion. You cannot exit a halted stock at any
+    price, and reopening prints are frequently catastrophic.
+  - Pump-and-dump. Newsletter and social promotion, price spikes on volume,
+    promoters exit into retail buying, price round-trips. The volume that
+    attracts a screener is the same volume created by the promotion.
+  - Sub-penny tick behaviour makes a "1 cent move" a 50% move.
+
+The screener's $1,000,000 average-daily-dollar-volume filter exists exactly to
+exclude this. That single threshold removes most of the OTC universe. The
+`explore` penny-stock mode deliberately relaxes the price floor but keeps a
+volume floor, and labels the result as higher risk, because the alternative is
+producing a list of untradeable names.
+
+
+3.4 WHY ANALYST COVERAGE IS NEARLY ABSENT
+--------------------------------------------------------------------------------
+The screener's own data makes this concrete: of 18,337 stocks pulled,
+approximately 11,324 had NO consensus rating at all. That is about 62% of the
+universe with zero analyst coverage.
+
+The economics explain it entirely:
+
+  - Research is expensive. An analyst covering a name properly costs a firm
+    low-to-mid six figures a year, all-in.
+  - Research is paid for indirectly — through trading commissions, investment
+    banking relationships, or (post-MiFID II in Europe) explicit payment.
+  - A company with a $20 million market cap cannot generate enough institutional
+    commission flow to fund coverage. Institutions cannot buy a meaningful
+    position without moving the price, so they do not participate, so there is
+    no commission.
+  - No banking fees either — these companies do not do large secondaries or
+    acquisitions through bulge-bracket banks.
+  - Compliance risk. Covering a company with thin disclosure and unreliable
+    financials creates liability for the research firm.
+  - Index exclusion. Not being in an index means no passive flow and no
+    benchmark-driven institutional interest.
+
+Where "coverage" of microcaps does exist, it is frequently ISSUER-PAID research:
+the company pays a firm to publish. Disclosure is legally required but buried.
+Treat a lone "Strong Buy" on a $30 million company as marketing until proven
+otherwise.
+
+This is the honest reason the screener's core method cannot be pointed at penny
+stocks. The entire scoring model rests on analyst consensus, upgrade drift, and
+price targets. In a universe with no analysts, there is nothing to score. The
+`explore` penny mode therefore falls back to price and volume signals only, and
+says so.
+
+
+================================================================================
+PART 4 — HOW THIS CONNECTS TO THE SCREENER
+================================================================================
+
+  - RSI 50-70 scoring (score.py: momentum_score) is the only oscillator concept
+    used. No cycle detection, no wave fitting, by choice.
+  - The one-month horizon is justified by analyst-upgrade drift, which has a
+    date-stamped mechanism, not by any cyclical claim.
+  - The $1M dollar-volume floor and the 3-analyst minimum are what keep the
+    main screen out of the penny-stock and no-coverage swamp.
+  - ETFs and penny stocks are separated into their own `explore` categories
+    precisely because the analyst-based model does not transfer to them, and
+    pretending otherwise would generate confident nonsense.
+
+                                    * * *
+
+Not investment advice. Every threshold here is a judgement call, and the
+sections above try to be explicit about which ones rest on evidence and which
+rest on convention.

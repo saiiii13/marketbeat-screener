@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Growth Screener {{ run_date }}</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --border: rgba(11,11,11,0.10);
+  --series-1: #2a78d6; --seq-200: #9ec5f4; --seq-450: #2a78d6; --seq-650: #104281;
+  --good: #0ca30c; --good-text: #006300; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --hold: #c3c2b7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --seq-200: #184f95; --seq-450: #3987e5; --seq-650: #86b6ef;
+    --good-text: #0ca30c; --hold: #383835;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+  --series-1: #3987e5; --seq-200: #184f95; --seq-450: #3987e5; --seq-650: #86b6ef;
+  --good-text: #0ca30c; --hold: #383835;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--ink-2); margin: 0 0 20px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.tile .v { font-size: 26px; font-weight: 600; line-height: 1.1; }
+.tile .l { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
+.card h2 { font-size: 15px; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--grid); }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+td { padding: 8px 8px; border-bottom: 1px solid var(--grid); vertical-align: middle; font-variant-numeric: tabular-nums; }
+tr.row { cursor: pointer; }
+tr.row:hover td { background: color-mix(in oklab, var(--series-1) 6%, transparent); }
+.tk { font-weight: 600; }
+.co { color: var(--ink-2); font-size: 12px; display: block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { position: relative; height: 8px; background: var(--grid); border-radius: 4px; width: 70px; display: inline-block; vertical-align: middle; margin-right: 6px; }
+.bar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--seq-450); }
+.stack { display: flex; height: 10px; width: 100px; border-radius: 4px; overflow: hidden; gap: 2px; background: transparent; }
+.stack > i { display: block; height: 100%; }
+.stack .b { background: var(--good); } .stack .h { background: var(--hold); } .stack .s { background: var(--critical); }
+.cnt { font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+.cnt.wrap { white-space: normal; display: block; max-width: 170px; line-height: 1.3; margin-top: 3px; }
+.up { color: var(--good-text); } .dn { color: var(--critical); }
+.flag { display: inline-block; font-size: 10px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--border); color: var(--ink-2); margin: 1px 2px 1px 0; white-space: nowrap; }
+.flag::before { content: "\26A0\FE0E "; }
+.why { color: var(--ink-2); font-size: 12px; min-width: 140px; max-width: 190px; }
+.spark { display: block; }
+.spark path { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.spark .pt { fill: var(--series-1); stroke: var(--surface); stroke-width: 2; }
+.spark .hit { fill: transparent; }
+.tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--surface); font-size: 12px; padding: 4px 8px; border-radius: 6px; display: none; z-index: 10; }
+.detail { display: none; }
+.detail.open { display: table-row; }
+.detail td { background: color-mix(in oklab, var(--series-1) 4%, var(--surface)); padding: 14px 16px 18px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px 22px; max-width: min(1140px, calc(100vw - 64px)); }
+.grid h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.kv { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; border-bottom: 1px dashed var(--grid); font-size: 13px; }
+.kv span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
+.comp { display: grid; grid-template-columns: minmax(90px, 46%) 1fr 30px; gap: 4px 8px; align-items: center; font-size: 12px; }
+.comp > span:nth-child(3n) { text-align: right; }
+.comp .bar { width: 100%; }
+.hl { font-size: 12px; margin: 3px 0; } .hl a { color: var(--ink); } .hl small { color: var(--muted); }
+.hist { font-size: 12px; margin: 2px 0; }
+.reasons { list-style: none; padding: 0; margin: 0; }
+.reasons li { font-size: 13px; padding: 3px 0 3px 18px; position: relative; }
+.reasons li::before { content: "+"; position: absolute; left: 2px; color: var(--good-text); font-weight: 700; }
+.risks li::before { content: "!"; color: var(--critical); }
+.fc { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 13px; }
+.fcbar { display: flex; height: 12px; border-radius: 4px; overflow: hidden; gap: 2px; margin: 6px 0 2px; }
+.fcbar > i { display: block; }
+.range { position: relative; height: 26px; margin: 8px 0 2px; }
+.range .track { position: absolute; top: 11px; left: 0; right: 0; height: 4px; background: var(--grid); border-radius: 2px; }
+.range .fill { position: absolute; top: 11px; height: 4px; background: var(--seq-450); border-radius: 2px; }
+.range .mk { position: absolute; top: 6px; width: 2px; height: 14px; background: var(--ink-2); }
+.range .now { background: var(--good); width: 3px; height: 18px; top: 4px; }
+.range .lbl { position: absolute; top: 0; font-size: 10px; color: var(--muted); }
+.foot { color: var(--muted); font-size: 12px; margin-top: 24px; }
+.mob { display: none; }
+@media (max-width: 760px) {
+  .hide-m { display: none; }
+  .mob { display: inline; }
+  td, th { padding: 8px 6px; }
+  .bar { width: 60px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Short-term growth screener · MarketBeat</h1>
+  <p class="sub">Run {{ run_date }} · generated {{ generated }} · selection from MarketBeat data only; yfinance supplies price history for timing/risk.</p>
+
+  <div class="tiles">
+    <div class="tile"><div class="v">{{ "{:,}".format(stats.universe) }}</div><div class="l">stocks screened</div></div>
+    <div class="tile"><div class="v">{{ "{:,}".format(stats.prefiltered) }}</div><div class="l">passed analyst pre-filter</div></div>
+    <div class="tile"><div class="v">{{ "{:,}".format(stats.with_prices) }}</div><div class="l">with price history</div></div>
+    <div class="tile"><div class="v">{{ "{:,}".format(stats.finalists) }}</div><div class="l">finalists (full MarketBeat pull)</div></div>
+    <div class="tile"><div class="v">{{ "{:,}".format(stats.ranked) }}</div><div class="l">passed hard filters</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Top {{ rows|length }} · ranked by 1-month growth score (click a row for every MarketBeat feature)</h2>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Stock</th><th>Score</th><th class="hide-m">Buy / Hold / Sell</th><th>Target upside</th>
+        <th>1-mo return</th><th class="hide-m">30-day price</th><th class="hide-m">Flags</th><th class="hide-m">Why</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+      <tr class="row" data-i="{{ loop.index0 }}">
+        <td>{{ r.rank }}</td>
+        <td><span class="tk">{{ r.ticker }}</span> <span class="cnt">{{ r.exchange or "" }}</span><span class="co">{{ r.company }}</span></td>
+        <td><span class="bar"><i style="width:{{ r.score }}%"></i></span>{{ r.score }}</td>
+        <td class="hide-m">
+          <div class="stack"><i class="b" style="width:{{ r.buy_w }}%"></i><i class="h" style="width:{{ r.hold_w }}%"></i><i class="s" style="width:{{ r.sell_w }}%"></i></div>
+          <span class="cnt wrap">{{ r.buy }} buy · {{ r.hold }} hold · {{ r.sell }} sell · {{ r.rating }}{% if r.analysts %} ({{ r.analysts }}){% endif %}</span>
+        </td>
+        <td class="{{ 'up' if r.upside_pos else 'dn' }}">{{ r.upside or "–" }}<span class="cnt"> → {{ r.target or "" }}</span></td>
+        <td class="{{ 'up' if r.ret_1m_pos else 'dn' }}">{{ r.ret_1m or "–" }}<span class="cnt"> ({{ r.price }})</span></td>
+        <td class="hide-m">
+          <svg class="spark" width="{{ r.spark.w or 120 }}" height="{{ r.spark.h or 32 }}" data-i="{{ loop.index0 }}" aria-label="30-day closing prices for {{ r.ticker }}">
+            <path d="{{ r.spark.path }}"></path>
+            {% if r.spark.points %}<circle class="pt" r="3" cx="{{ r.spark.points[-1][0] }}" cy="{{ r.spark.points[-1][1] }}"></circle>{% endif %}
+            <rect class="hit" x="0" y="0" width="100%" height="100%"></rect>
+          </svg>
+        </td>
+        <td class="hide-m">{% for f in r.flags %}<span class="flag">{{ f }}</span>{% endfor %}</td>
+        <td class="why hide-m">{% if r.buy_reasons %}{{ r.buy_reasons[0] }}{% if r.buy_reasons|length > 1 %}<br><small>{{ r.buy_reasons[1] }}</small>{% endif %}{% else %}{{ r.why }}{% endif %}</td>
+      </tr>
+      <tr class="detail" id="d{{ loop.index0 }}"><td colspan="9">
+        <div class="grid">
+          <div style="grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px 22px;">
+            <div>
+              <h4>Why buy {{ r.ticker }}</h4>
+              <ul class="reasons">
+                {% for why in r.buy_reasons %}<li>{{ why }}</li>{% endfor %}
+                {% if not r.buy_reasons %}<li>No standout signals — it ranked on score alone.</li>{% endif %}
+              </ul>
+            </div>
+            <div>
+              <h4>What could go wrong</h4>
+              <ul class="reasons risks">
+                {% for rk in r.risk_notes %}<li>{{ rk }}</li>{% endfor %}
+                {% if not r.risk_notes %}<li>No risk flags raised by the screen.</li>{% endif %}
+              </ul>
+            </div>
+            <div>
+              <h4>Analyst forecast</h4>
+              {% set f = r.detail.forecast %}
+              {% if f.low and f.high and r.price_raw %}
+              <div class="range">
+                <div class="track"></div>
+                {% set span = (f.high - f.low) or 1 %}
+                {% set pos = ((r.price_raw - f.low) / span * 100) | round(1) %}
+                {% set tpos = ((f.target - f.low) / span * 100) | round(1) if f.target else 50 %}
+                <div class="fill" style="left:0;width:{{ [[pos, 0]|max, 100]|min }}%"></div>
+                <div class="mk now" style="left:{{ [[pos, 0]|max, 100]|min }}%" title="current price"></div>
+                <div class="mk" style="left:{{ [[tpos, 0]|max, 100]|min }}%" title="consensus target"></div>
+                <div class="lbl" style="left:0">${{ "%.0f"|format(f.low) }}</div>
+                <div class="lbl" style="right:0">${{ "%.0f"|format(f.high) }}</div>
+              </div>
+              {% endif %}
+              <div class="fc">
+                <span>Consensus target</span><span>{{ r.target or "–" }}{% if r.upside %} ({{ r.upside }}){% endif %}</span>
+                <span>Low / high target</span><span>{% if f.low %}${{ "%.2f"|format(f.low) }}{% else %}–{% endif %} / {% if f.high %}${{ "%.2f"|format(f.high) }}{% else %}–{% endif %}</span>
+                <span>Rating score (1–5)</span><span>{{ f.score or "–" }}</span>
+                <span>Analysts covering</span><span>{{ r.analysts or "–" }}</span>
+              </div>
+              <div class="fcbar" title="buy / hold / sell">
+                <i class="b" style="width:{{ r.buy_w }}%;background:var(--good)"></i>
+                <i style="width:{{ r.hold_w }}%;background:var(--hold)"></i>
+                <i style="width:{{ r.sell_w }}%;background:var(--critical)"></i>
+              </div>
+              <span class="cnt">now: {{ r.buy }} buy · {{ r.hold }} hold · {{ r.sell }} sell</span>
+              {% if f.counts_1m %}<br><span class="cnt">a month ago: {{ f.counts_1m.get("strong_buy", 0) + f.counts_1m.get("buy", 0) }} buy · {{ f.counts_1m.get("hold", 0) }} hold · {{ f.counts_1m.get("sell", 0) + f.counts_1m.get("strong_sell", 0) }} sell</span>{% endif %}
+              <h4 style="margin-top:10px">Recent analyst actions</h4>
+              {% for h in r.detail.history[:6] %}<div class="hist">{{ h.date }} · {{ h.firm }} · {{ h.action }}{% if h.rating_to %} → {{ h.rating_to }}{% endif %}{% if h.target_to %} ${{ h.target_to }}{% endif %}</div>{% endfor %}
+            </div>
+          </div>
+          <div>
+            <h4>Score breakdown</h4>
+            <div class="comp">
+              {% for k, v in r.components.items() %}
+              <span>{{ labels[k] }} <small style="color:var(--muted)">({{ r.weights[k] }}%)</small></span>
+              <span class="bar"><i style="width:{{ v or 0 }}%"></i></span><span>{{ v if v is not none else "–" }}</span>
+              {% endfor %}
+            </div>
+            <h4 style="margin-top:10px">MarketBeat feature sub-scores</h4>
+            <div class="comp">
+              {% for k, v in r.mb_parts.items() %}
+              <span>{{ k.replace("_", " ") }}</span><span class="bar"><i style="width:{{ v or 0 }}%"></i></span><span>{{ v if v is not none else "–" }}</span>
+              {% endfor %}
+            </div>
+          </div>
+          <div>
+            <h4>MarketRank™</h4>
+            <div class="kv"><span>Overall percentile</span><span>{{ r.detail.marketrank if r.detail.marketrank is not none else "–" }}</span></div>
+            {% for k, v in r.detail.mr.items() %}<div class="kv"><span>{{ k.replace("_", " ") }}</span><span>{{ v if v is not none else "–" }} / 5</span></div>{% endfor %}
+            {% if r.detail.sector_rank %}<div class="kv"><span>Sector rank</span><span>{{ r.detail.sector_rank }}</span></div>{% endif %}
+            <div class="kv"><span>Market cap</span><span>{{ r.detail.market_cap }}</span></div>
+            <div class="kv"><span>Beta</span><span>{{ r.detail.beta if r.detail.beta is not none else "–" }}</span></div>
+            <div class="kv"><span>P/E · PEG · P/B</span><span>{{ r.detail.pe or "–" }} · {{ r.detail.peg or "–" }} · {{ r.detail.pb or "–" }}</span></div>
+          </div>
+          <div>
+            <h4>Earnings</h4>
+            <div class="kv"><span>Next report</span><span>{{ r.detail.next_earnings or "–" }}</span></div>
+            <div class="kv"><span>Beat rate (4q)</span><span>{{ r.detail.beat_rate ~ "%" if r.detail.beat_rate is not none else "–" }}</span></div>
+            <div class="kv"><span>Proj. EPS growth</span><span>{{ r.detail.proj_growth ~ "%" if r.detail.proj_growth is not none else "–" }}</span></div>
+            {% for e in r.detail.earnings %}<div class="hist">{{ e.date }} {{ e.quarter }}: est {{ e.eps_est }} → {{ e.eps_actual }} ({{ "%+.2f"|format(e.beat_miss) if e.beat_miss is not none else "–" }})</div>{% endfor %}
+          </div>
+          <div>
+            <h4>Short interest · insiders · institutions</h4>
+            <div class="kv"><span>Short % of float</span><span>{{ r.detail.short_pct if r.detail.short_pct is not none else "–" }}% ({{ r.detail.short_level or "–" }})</span></div>
+            <div class="kv"><span>Days to cover · change</span><span>{{ r.detail.short_dtc or "–" }} · {{ r.detail.short_change ~ "%" if r.detail.short_change is not none else "–" }}</span></div>
+            <div class="kv"><span>Insider bought / sold (3m)</span><span>{{ r.detail.insider_buy }} / {{ r.detail.insider_sell }}</span></div>
+            <div class="kv"><span>Insider · institutional own.</span><span>{{ r.detail.insider_own if r.detail.insider_own is not none else "–" }}% · {{ r.detail.inst_own if r.detail.inst_own is not none else "–" }}%</span></div>
+            <div class="kv"><span>Institutions adding / trimming</span><span>{{ r.detail.inst_inc if r.detail.inst_inc is not none else "–" }} / {{ r.detail.inst_dec if r.detail.inst_dec is not none else "–" }}</span></div>
+          </div>
+          <div>
+            <h4>Technicals · sentiment</h4>
+            <div class="kv"><span>5-day · 1-month</span><span>{{ r.ret_5d or "–" }} · {{ r.ret_1m or "–" }}</span></div>
+            <div class="kv"><span>RSI(14)</span><span>{{ r.rsi or "–" }}</span></div>
+            <div class="kv"><span>Volatility (20d ann.)</span><span>{{ r.vol or "–" }}</span></div>
+            <div class="kv"><span>Avg $ volume (20d)</span><span>{{ r.dollar_vol }}</span></div>
+            <div class="kv"><span>From 52-week high</span><span>{{ r.from_high or "–" }}</span></div>
+            <div class="kv"><span>News sentiment (−2..2)</span><span>{{ r.detail.news_sentiment if r.detail.news_sentiment is not none else "–" }}</span></div>
+            <div class="kv"><span>Articles this week / avg</span><span>{{ r.detail.news_week|int if r.detail.news_week else "–" }} / {{ r.detail.news_avg|int if r.detail.news_avg else "–" }}</span></div>
+            <div class="kv"><span>Watchlist adds (30d)</span><span>{{ r.detail.follows|int if r.detail.follows else "–" }}</span></div>
+          </div>
+          <div>
+            <h4>Recent headlines</h4>
+            {% for h in r.detail.headlines %}<div class="hl"><a href="{{ h.url }}" target="_blank" rel="noopener">{{ h.title }}</a> <small>{{ (h.when or "")[:10] }}</small></div>{% endfor %}
+            {% if r.detail.url %}<div class="hl"><a href="{{ r.detail.url }}" target="_blank" rel="noopener">Open on MarketBeat →</a></div>{% endif %}
+          </div>
+        </div>
+      </td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  {% if excluded %}
+  <div class="card">
+    <h2>Finalists dropped by hard filters</h2>
+    <table><thead><tr><th>Stock</th><th>Reason</th></tr></thead><tbody>
+    {% for e in excluded %}<tr><td><span class="tk">{{ e.ticker }}</span> <span class="co">{{ e.company }}</span></td><td>{{ e.excluded }}</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  {% endif %}
+
+  <p class="foot">Score = {% for k, v in weights.items() %}{{ v }}% {{ labels[k] }}{{ ", " if not loop.last }}{% endfor %}.
+  Hard filters: ≥3 analysts, ≥$1M avg daily dollar volume, ≤60% annualized volatility, within 25% of 52-week high.
+  Informational only — not investment advice. Short-horizon trades carry substantial risk; verify every number on MarketBeat before acting.</p>
+</div>
+<div class="tip" id="tip"></div>
+<script>
+const rows = {{ rows_json|safe }};
+document.querySelectorAll('tr.row').forEach(tr => {
+  tr.addEventListener('click', e => {
+    if (e.target.closest('a')) return;
+    document.getElementById('d' + tr.dataset.i).classList.toggle('open');
+  });
+});
+const tip = document.getElementById('tip');
+document.querySelectorAll('svg.spark').forEach(svg => {
+  const closes = rows[+svg.dataset.i].c;
+  const path = svg.querySelector('path');
+  let dot = null;
+  svg.addEventListener('mousemove', e => {
+    if (!closes.length) return;
+    const box = svg.getBoundingClientRect();
+    const w = box.width, x = e.clientX - box.left;
+    const i = Math.max(0, Math.min(closes.length - 1, Math.round((x - 2) / (w - 4) * (closes.length - 1))));
+    const lo = Math.min(...closes), hi = Math.max(...closes), span = (hi - lo) || 1;
+    const px = 2 + i * (w - 4) / (closes.length - 1), py = 2 + (box.height - 4) * (1 - (closes[i] - lo) / span);
+    if (!dot) { dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); dot.setAttribute('r', 3.5); dot.setAttribute('class', 'pt'); svg.insertBefore(dot, svg.lastElementChild); }
+    dot.setAttribute('cx', px); dot.setAttribute('cy', py);
+    const daysAgo = closes.length - 1 - i;
+    tip.textContent = `$${closes[i].toFixed(2)} · ${daysAgo === 0 ? 'latest' : daysAgo + ' sessions ago'}`;
+    tip.style.display = 'block'; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY - 28) + 'px';
+  });
+  svg.addEventListener('mouseleave', () => { tip.style.display = 'none'; if (dot) { dot.remove(); dot = null; } });
+});
+</script>
+</body>
+</html>
