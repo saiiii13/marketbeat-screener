@@ -199,9 +199,10 @@ def cmd_plan(args):
     from screener import planner
     if args.hold_add:
         ticker, shares, total = args.hold_add.split(",")
-        planner.save_holding(ticker.strip(), float(shares), float(total) / float(shares))
-        print(f"Saved holding {ticker.strip().upper()}: {float(shares):g} shares for ${float(total):,.2f} "
-              f"(${float(total) / float(shares):,.2f} a share)")
+        planner.add_lot(ticker.strip(), float(shares), float(total))
+        h = next(h for h in planner.holdings() if h["ticker"] == ticker.strip().upper())
+        print(f"Saved holding {h['ticker']}: now {h['shares']:g} shares for ${h['shares'] * h['purchase_price']:,.2f} "
+              f"in all (${h['purchase_price']:,.2f} a share)")
     if args.sell_limit:
         ticker, price = args.sell_limit.split(",")
         planner.set_sell_limit(ticker.strip(), float(price) if float(price) > 0 else None)

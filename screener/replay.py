@@ -95,6 +95,31 @@ def apply_overlay(name: str, scored: list[tuple], sigs: dict[str, dict]) -> list
     return [(0.7 * float(rule_pct[t]) + 0.3 * float(sig_pct[t]), h, t, e) for _, h, t, e in rows]
 
 
+SPLIT_FACTORS = (3, 4, 5, 8, 10, 15, 20, 25, 30, 40, 50, 100, 1000)
+
+
+def split_like(closes: pd.Series) -> bool:
+    """Whether the closes show a split MarketBeat never adjusted for: a one-day move of
+    SPLIT_JUMP or more that is within 5% of a whole split factor (up or down) and where the
+    new level holds for the next five closes. A real crash or spike that is not a clean
+    factor, or that reverses, is a real move and stays in the backtest. The closes before the
+    jump must be steady too, so the fall back from a one-day spike is not read as a split."""
+    c = closes.dropna().reset_index(drop=True)
+    jumps = c / c.shift(1)
+    for i in jumps.index[1:]:
+        x = float(jumps[i])
+        if 1 / SPLIT_JUMP < x < SPLIT_JUMP:
+            continue
+        f = x if x > 1 else 1 / x
+        k = min(SPLIT_FACTORS, key=lambda k: abs(f - k) / k)
+        after = c[i:i + 6] / c[i]
+        before = c[max(0, i - 5):i] / c[i - 1]
+        if (abs(f - k) / k <= 0.05 and len(after) >= 2 and after.between(0.75, 1.33).all()
+                and before.between(0.75, 1.33).all()):
+            return True
+    return False
+
+
 def order(scored: list[tuple]) -> list[tuple]:
     """(score, holds, ticker, ...) rows in the list's order (mb_ratio.sort_key)."""
     return sorted(scored, key=lambda x: sort_key(x[0], x[1], x[2]))
@@ -197,13 +222,11 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
     counts = frame.notna().sum(axis=1)
     days = [d for d in frame.index if counts[d] >= max(1, 0.5 * frame.shape[1])]
     frame = frame.loc[days].ffill()
-    ratio = frame / frame.shift(1)
-    broken = [t for t in frame.columns
-              if ((ratio[t] > SPLIT_JUMP) | (ratio[t] < 1 / SPLIT_JUMP)).any()]
+    broken = [t for t in frame.columns if split_like(frame[t])]
     if broken:
         frame = frame.drop(columns=broken)
-        notes.append(f"{len(broken)} stock(s) left out for a one-day price move of {SPLIT_JUMP:.0f}x or "
-                     f"more, almost always an unadjusted split in MarketBeat's chart"
+        notes.append(f"{len(broken)} stock(s) left out for an unadjusted split in MarketBeat's chart (a "
+                     f"one-day jump of a whole split factor that holds afterwards); real crashes stay in"
                      + (f": {', '.join(broken)}" if len(broken) <= 12 else "."))
     if frame.empty:
         return {"error": "Every chosen stock was left out for broken price history."}

@@ -156,7 +156,7 @@ def sell_guidance(holding: dict, price: float | None, closes: pd.Series, sig: di
     sigma = _daily_sigma(closes) or 0.02
     month = sigma * math.sqrt(21)
     recent_high = float(closes.tail(21).max()) if len(closes) else price
-    stop = round(max(paid, recent_high) * (1 - STOP_MONTHS * month), 2)
+    stop = max(0.01, round(max(paid, recent_high) * (1 - STOP_MONTHS * month), 2))
     target_sell = round(target, 2) if target and target > price else round(price * (1 + month), 2)
     out.update(stop_loss=stop, target_sell=target_sell)
     limit_text = f"your ${own:,.2f} sell limit" if own else f"a ${target_sell:,.2f} sell limit"
@@ -218,6 +218,17 @@ def save_holding(ticker: str, shares: float, purchase_price: float, purchase_dat
                     "purchase_price=excluded.purchase_price, purchase_date=excluded.purchase_date, "
                     "updated=excluded.updated",
                     (ticker.upper(), shares, purchase_price, purchase_date, db.now()))
+
+
+def add_lot(ticker: str, shares: float, total_paid: float, purchase_date: str | None = None):
+    """Another purchase of a stock: added to what is already held (shares and total paid sum,
+    the average price follows; the sell limit stays). save_holding replaces instead."""
+    with db.connect() as con:
+        old = con.execute("SELECT shares, purchase_price FROM holdings WHERE ticker=?",
+                          (ticker.upper(),)).fetchone()
+    if old:
+        shares, total_paid = old[0] + shares, old[0] * old[1] + total_paid
+    save_holding(ticker, shares, total_paid / shares, purchase_date)
 
 
 def delete_holding(ticker: str):

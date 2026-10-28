@@ -1876,7 +1876,7 @@ class HoldingsScene(Scene):
         elif event.key == pygame.K_a:
             def add(values, app):
                 ticker, shares, total = values
-                planner.save_holding(ticker, shares, total / shares)
+                planner.add_lot(ticker, shares, total)
                 return HoldingsScene()
             return InputScene("ADD A HOLDING", "a stock you already own - saved for next time",
                               [("ticker", "ticker", ""), ("number of shares", "float", ""),
@@ -2062,7 +2062,10 @@ class PortfolioScene(Scene):
             ticker, shares, total = values
             if row and row["ticker"] != ticker:
                 planner.delete_holding(row["ticker"])
-            planner.save_holding(ticker, shares, total / shares)
+            if row:
+                planner.save_holding(ticker, shares, total / shares)
+            else:
+                planner.add_lot(ticker, shares, total)   # buying more of one already held adds to it
             tickers = sorted({r["ticker"] for r in self.rows} - {row and row["ticker"]} | {ticker})
             return portfolio_start(app, tickers.index(ticker))
 
