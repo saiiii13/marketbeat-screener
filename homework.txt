@@ -1215,6 +1215,52 @@ win rate, -9.04% max drawdown. #22 the same with the 70/30 blend: +23.54%,
 -18.69% drawdown. Undo: data/backups/backup_pre_netbuys_2026-10-27/.
 
 
+
+PART 11 - SHARED SIGNALS, A FIXED BACKTEST, AND WHAT MARKETBEAT'S HISTORY CAN TEST (2026-10-28)
+
+Two independent code reviews changed what earlier parts can claim.
+
+1. The backtest saw the future. ratings.counts_at corrected rebuilt past counts with
+   MarketBeat snapshots dated after the replay day. Fixed in 5d6c82f; removing every later
+   snapshot now changes 0 of 1,800 checked stock-days. Part 10's numbers were inflated:
+   on the fixed backtest (16 windows) old ratio +10.4%, net buys +14.4%, net buys with
+   zero sells +3.4%.
+2. MarketBeat keeps only each firm's latest action. rating_actions holds 33,657 rows for
+   32,776 firm/ticker pairs, all first recorded 2026-10-25..28, and the stored months grow
+   from 663 actions (2025-10) to 8,120 (2026-10). Upgrade/downgrade flow, target revisions,
+   rebuilt targets and target agreement for past days would measure what survived, not
+   what analysts did. signals.py now counts only actions the screener had recorded by the
+   day; the backtest refuses those four rules until enough recorded history exists
+   (upgrades 60 days, target raises 30 days, upside and agreement from 2026-10-25).
+3. The split guard dropped real crashes. It now adjusts MarketBeat's unadjusted splits (the
+   closes before scaled by the factor) and repairs one-day bad prints; 2026-01-26..10-23
+   has 28 splits adjusted and 8 bad prints repaired, and real crashes stay in.
+
+Scan (scripts/scan_signals.py, 88 runs, 21-day holds, top 10 and top 20, 8 windows:
+5 rolling starts to 2026-10-23 and three 3-month blocks; S&P 500 averaged +7.33%):
+
+  rule                                   mean   beats net   beats S&P   max drop   in cash
+  net buys (backtest default)           +13.68      -        14/16       -9.03%      17%
+  net buys + analysts turning positive  +14.70     6/16      14/16       -9.44%      16%
+  my list (36+ buys, <5 holds, 0 sells)  +0.96     2/16       0/16       -2.68%      83%
+  my list, all money in                  +7.53     2/16       6/16      -16.06%       4%
+
+Adoption bar for "analysts turning positive" (all five needed): wins 70% of windows - no
+(6/16); +2 points - no (+1.0); better without its two best stocks - yes (+12.93 vs +10.21);
+better on official counts only - no (+5.08 vs +16.55); drawdown within 3 points - yes.
+Verdict: not adopted; it stays a backtest option (menu B, X).
+
+The menu list keeps the user's rule (more than 35 buys, fewer than 5 holds, no sells). In
+the backtest it qualifies only 2-7 stocks at a time: holding them with the rest in cash
+earned +1%, and putting all the money into them earned +7.5%, about the S&P 500's +7.3%,
+with a deeper worst drop (-16%) because a handful of large tech names fall together.
+Plain net buys (sells allowed, -5 each) did best: +13.7%, ahead of the S&P in 14 of 16
+windows. One year of history, a year good for large tech, so treat it as evidence, not
+a promise.
+
+Restore points: git tags restore-2026-10-28 (before this work) and
+restore-2026-10-28-signals (after it); data/backups/restore_2026-10-28/screener.db.
+
                                     * * *
 
 Not investment advice. Every threshold here is a judgement call, and the
