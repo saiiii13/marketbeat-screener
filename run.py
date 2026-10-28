@@ -170,7 +170,8 @@ def cmd_replay(args):
         tickers = replay.latest_recommendations(args.top)
     result = replay.run(start, end, tickers, args.cash, args.picks, args.hold, label=args.label or "",
                         from_recommendations=args.tickers == "recs",
-                        trend=args.trend or replay.DEFAULT_TREND)
+                        trend=args.trend or replay.DEFAULT_TREND, rule=args.rule,
+                        invest_all=args.invest_all)
     replay.show(result)
 
 
@@ -353,6 +354,11 @@ def main():
     ap.add_argument("--label", help="replay: a name to store with the result")
     ap.add_argument("--trend", choices=["none", "up1m", "up3m", "blend3m"],
                     help="replay: price-chart rule on top of the ratio (default: none)")
+    ap.add_argument("--rule", choices=["net", "list", "net0", "ratio"], default="net",
+                    help="replay: how stocks are ranked - net buys, the menu list's rule, "
+                         "net buys without sells, or the old buy share (default: net)")
+    ap.add_argument("--invest-all", action="store_true",
+                    help="replay: split all the money over whatever qualifies, however few")
     ap.add_argument("--picks-plan", type=int, default=5,
                     help="plan: how many stocks the program picks when --tickers is not given")
     ap.add_argument("--hold-add", help="plan: save a holding as TICKER,SHARES,TOTAL_PAID")

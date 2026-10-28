@@ -36,7 +36,7 @@ from datetime import date
 import pandas as pd
 
 from . import db, ratings
-from .mb_ratio import MIN_ANALYSTS, net_buys
+from .mb_ratio import MIN_ANALYSTS, RULES, sort_key
 from .score import one_per_company
 
 HINDSIGHT = ("These stocks were chosen from today's recommendations - the stocks MarketBeat's "
@@ -59,6 +59,18 @@ TRENDS = {
     "blend3m": ("70% net-buys percentile, 30% 3-month price change percentile", 91),
 }
 DEFAULT_TREND = "none"
+
+
+def order(scored: list[tuple]) -> list[tuple]:
+    """(score, holds, ticker, ...) rows in the list's order (mb_ratio.sort_key)."""
+    return sorted(scored, key=lambda x: sort_key(x[0], x[1], x[2]))
+
+
+def budget(cash: float, value: float, new: int, picks: int, chosen: int, invest_all: bool) -> float:
+    """Dollars for each newly bought stock: an equal share of the portfolio's value per slot
+    (picks slots, or just the chosen stocks when fully invested), never more than the free cash."""
+    slots = max(chosen, 1) if invest_all else picks
+    return min(cash / new, value / slots)
 
 
 def _changes_on(full: pd.DataFrame, day: str, days: int) -> pd.Series:
@@ -119,8 +131,10 @@ def _max_drawdown(values: list[float]) -> float:
 def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DEFAULT_CASH,
         picks: int = DEFAULT_PICKS, hold_days: int = DEFAULT_HOLD_DAYS,
         min_analysts: int = MIN_ANALYSTS, label: str = "", save: bool = True, say=print,
-        from_recommendations: bool = False, trend: str = "none") -> dict:
+        from_recommendations: bool = False, trend: str = "none", rule: str = "net",
+        invest_all: bool = False) -> dict:
     notes: list[str] = []
+    rank_by = RULES[rule][0]
     trend_days = TRENDS[trend][1]
     if from_recommendations:
         notes.append(HINDSIGHT)
@@ -209,7 +223,7 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
                 c = ratings.counts_at(stock, day) if stock else None
                 if not c or sum(c) < min_analysts:
                     continue
-                score = net_buys(*c)
+                score = rank_by(*c)
                 if score is None:
                     continue
                 if change is not None:
@@ -220,27 +234,30 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
                         continue
                 exact = any(0 <= (date.fromisoformat(day) - date.fromisoformat(d)).days
                             <= ratings.EXACT_WITHIN_DAYS for d in stock["snapshots"])
-                scored.append((score, sum(c), t, exact))
+                scored.append((score, c[1], t, exact))
             if trend == "blend3m" and scored:
                 # Net buys has no fixed scale, so it is blended as a percentile too.
                 net_pct = pd.Series({t: s for s, _, t, _ in scored}).rank(pct=True)
-                scored = [(0.7 * float(net_pct[t]) + 0.3 * float(pct[t]), n, t, e)
-                          for _, n, t, e in scored]
-            scored.sort(key=lambda x: (-x[0], -x[1], x[2]))
+                scored = [(0.7 * float(net_pct[t]) + 0.3 * float(pct[t]), h, t, e)
+                          for _, h, t, e in scored]
+            scored = order(scored)
             distinct, _ = one_per_company([t for _, _, t, _ in scored], company_of)
             chosen = distinct[:picks]
             exact_of = {t: exact for _, _, t, exact in scored}
             for t in chosen:
                 pick_sources["snapshot" if exact_of[t] else "rebuilt"] += 1
-            for t in [t for t in positions if t not in chosen]:
+            # Fully invested: every rebalance sells everything and splits the value equally
+            # over whatever qualified, however few.
+            leaving = list(positions) if invest_all else [t for t in positions if t not in chosen]
+            for t in leaving:
                 close_position(t, day, float(row[t]))
             new = [t for t in chosen if t not in positions]
             if new:
                 value_now = cash + sum(p["shares"] * float(row[t]) for t, p in positions.items())
-                budget = min(cash / len(new), value_now / picks)
+                each = budget(cash, value_now, len(new), picks, len(chosen), invest_all)
                 for t in new:
                     price = float(row[t])
-                    shares = int(budget // price)
+                    shares = int(each // price)
                     if shares <= 0:
                         continue
                     cash -= shares * price
@@ -304,7 +321,7 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
               "ticker_list": tickers,
               "ticker_count": len(frame.columns), "cash": initial_cash,
               "picks": picks, "hold_days": hold_days, "min_analysts": min_analysts,
-              "trend": trend, "rank": "net buys"}
+              "trend": trend, "rule": rule, "invest_all": invest_all}
     result = {"params": params, "metrics": metrics, "trades": trades,
               "equity": [{"date": d, "strategy": v, "buy_hold": bh[1],
                           "benchmark": spy_curve[k][1] if spy_curve else None}
@@ -347,6 +364,16 @@ def equity_of(backtest_id: int) -> list[dict]:
             "ORDER BY date", (backtest_id,))]
 
 
+def describe(params: dict) -> str:
+    """How a saved backtest picked its stocks. Runs saved before 2026-10-28 have no rule
+    (they ranked by net buys or, before #21, the buy share) and say only their trend."""
+    parts = [RULES[params["rule"]][1]] if params.get("rule") in RULES else []
+    parts.append(TRENDS[params.get("trend", "none")][0])
+    if params.get("invest_all"):
+        parts.append("fully invested")
+    return ", ".join(parts)
+
+
 def show(result: dict):
     if result.get("error"):
         print(f"  {result['error']}")
@@ -354,7 +381,7 @@ def show(result: dict):
     m, p = result["metrics"], result["params"]
     print(f"\n  Backtest #{result.get('id', '-')}  {m['start']} to {m['end']}  ·  {m['stocks']} stocks  ·  "
           f"top {p['picks']} held {p['hold_days']} days  ·  ${m['start_cash']:,.0f} start  ·  "
-          f"{TRENDS[p.get('trend', 'none')][0]}")
+          f"{describe(p)}")
     spy = f"{m['spy_return_pct']:+.2f}%" if m["spy_return_pct"] is not None else "-"
     print(f"  total return     {m['total_return_pct']:+.2f}%   (ends ${m['end_equity']:,.2f})")
     print(f"  buy-and-hold     {m['buy_hold_return_pct']:+.2f}%   strategy vs it {m['vs_buy_hold_pts']:+.2f} pts")

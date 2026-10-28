@@ -54,6 +54,23 @@ def list_rule(buy: int, hold: int, sell: int) -> bool:
     return sell <= MAX_LIST_SELLS and hold <= LIST_MAX_HOLDS and buy >= LIST_MIN_BUYS
 
 
+# Ranking rules shared by the menu list (LIST_RULE) and the backtest (replay.run(rule=...)).
+# Each scores (buy, hold, sell); None leaves the stock out.
+RULES = {
+    "list": (lambda b, h, s: net_buys(b, h, s) if list_rule(b, h, s) else None,
+             "net buys, list stocks only (35+ buys, under 5 holds, no sells)"),
+    "net": (net_buys, "net buys (buys - 2 x holds - 5 x sells)"),
+    "net0": (lambda b, h, s: net_buys(b, h, s) if s == 0 else None, "net buys, no sells"),
+    "ratio": (lambda b, h, s: ratio_score(b, h, s), "buy share (the old ranking)"),
+}
+LIST_RULE = "list"
+
+
+def sort_key(score: float, hold: int, ticker: str) -> tuple:
+    """Highest score first; on a tie, fewer holds; then the ticker."""
+    return (-score, hold, ticker)
+
+
 def row_for(ticker: str, d: dict, p: dict | None = None) -> dict | None:
     counts = counts_of(d.get("rating_counts"))
     if not counts or not in_dollars(d):
@@ -74,11 +91,16 @@ def row_for(ticker: str, d: dict, p: dict | None = None) -> dict | None:
 
 
 def rank(rows: list[dict], min_analysts: int = MIN_ANALYSTS) -> list[dict]:
-    """Most net buys first, one listing per company (GOOGL and GOOG are both Alphabet), keeping
-    only stocks that pass list_rule."""
+    """Best first by RULES[LIST_RULE], one listing per company (GOOGL and GOOG are both
+    Alphabet); stocks the rule leaves out are dropped."""
     from .score import one_per_company
-    kept = [r for r in rows if r["analysts"] >= min_analysts and list_rule(r["buy"], r["hold"], r["sell"])]
-    kept.sort(key=lambda r: (-r["score"], r["hold"], r["ticker"]))
+    score = RULES[LIST_RULE][0]
+    kept = []
+    for r in rows:
+        s = score(r["buy"], r["hold"], r["sell"]) if r["analysts"] >= min_analysts else None
+        if s is not None:
+            kept.append({**r, "score": s})
+    kept.sort(key=lambda r: sort_key(r["score"], r["hold"], r["ticker"]))
     distinct, _ = one_per_company([r["ticker"] for r in kept],
                                   {r["ticker"]: r.get("company") for r in kept})
     keep = set(distinct)
