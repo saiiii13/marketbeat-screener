@@ -112,6 +112,10 @@ MAX_SELL_RATINGS = 0
 # (79%) is the kind of "Moderate Buy" this keeps out.
 MIN_LIST_BUY_SHARE = 0.90
 MAX_LIST_SELLS = 0
+# The menu list (ENTER) also needs heavy coverage, as the user set it on 2026-10-28:
+# more than 35 buys and fewer than 5 holds (with MAX_LIST_SELLS, no sells).
+LIST_MIN_BUYS = 36
+LIST_MAX_HOLDS = 4
 
 # Fixes from the 2026-10-15 backtest. Each is a switch so the time-travel test
 # (python run.py timetravel) can replay the old rules against the new with the same code.

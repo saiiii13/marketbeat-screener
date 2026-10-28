@@ -210,6 +210,8 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
                 if not c or sum(c) < min_analysts:
                     continue
                 score = net_buys(*c)
+                if score is None:
+                    continue
                 if change is not None:
                     moved = change.get(t)
                     if moved is None or pd.isna(moved):

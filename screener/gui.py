@@ -1046,7 +1046,7 @@ class RatioScene(Scene):
 
         res = self.result
         app.text(f"built {res['built']}  ·  {res['candidates']:,} candidates from MarketBeat's "
-                 f"lists  ·  {len(res['rows']):,} with 5+ analysts and no sells  ·  "
+                 f"lists  ·  {len(res['rows']):,} with more than 35 buys, under 5 holds, no sells  ·  "
                  f"ranked by net buys = buys - 2 x holds", app.font.sm, DIM, 40, 82)
         cols = [(50, "#"), (100, "TICKER"), (200, "BUY"), (255, "HOLD"), (315, "SELL"),
                 (375, "RATIO"), (540, "NET"), (600, "BUY %")]

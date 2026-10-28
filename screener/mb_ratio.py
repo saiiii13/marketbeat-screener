@@ -14,7 +14,7 @@ Wilson lower bound (ratio_score), with sells counted SELL_WEIGHT times.
 import math
 
 from . import db
-from .config import MAX_LIST_SELLS
+from .config import LIST_MAX_HOLDS, LIST_MIN_BUYS, MAX_LIST_SELLS
 from .ratings import counts_of
 
 MIN_ANALYSTS = 5
@@ -49,6 +49,11 @@ def net_buys(buy: int, hold: int, sell: int) -> int:
     return buy - HOLD_WEIGHT * hold - NET_SELL_WEIGHT * sell
 
 
+def list_rule(buy: int, hold: int, sell: int) -> bool:
+    """Whether a stock belongs on the menu list: no sells, few holds, many buys."""
+    return sell <= MAX_LIST_SELLS and hold <= LIST_MAX_HOLDS and buy >= LIST_MIN_BUYS
+
+
 def row_for(ticker: str, d: dict, p: dict | None = None) -> dict | None:
     counts = counts_of(d.get("rating_counts"))
     if not counts or not in_dollars(d):
@@ -69,9 +74,10 @@ def row_for(ticker: str, d: dict, p: dict | None = None) -> dict | None:
 
 
 def rank(rows: list[dict], min_analysts: int = MIN_ANALYSTS) -> list[dict]:
-    """Most net buys first, no sells, one listing per company (GOOGL and GOOG are both Alphabet)."""
+    """Most net buys first, one listing per company (GOOGL and GOOG are both Alphabet), keeping
+    only stocks that pass list_rule."""
     from .score import one_per_company
-    kept = [r for r in rows if r["analysts"] >= min_analysts and r["sell"] <= MAX_LIST_SELLS]
+    kept = [r for r in rows if r["analysts"] >= min_analysts and list_rule(r["buy"], r["hold"], r["sell"])]
     kept.sort(key=lambda r: (-r["score"], r["hold"], r["ticker"]))
     distinct, _ = one_per_company([r["ticker"] for r in kept],
                                   {r["ticker"]: r.get("company") for r in kept})
