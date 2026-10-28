@@ -14,8 +14,9 @@ import sqlite3
 from . import ansi as a
 
 from . import db
-from .config import MIN_DOLLAR_VOL
-from .score import clip01, hard_exclusions, momentum_score, price_outlook, rating_counts_of
+from .config import MAX_LIST_SELLS, MAX_PER_SECTOR, MIN_DOLLAR_VOL, MIN_LIST_BUY_SHARE
+from .score import (cap_per_sector, clip01, hard_exclusions, momentum_score, one_per_company,
+                    price_outlook, rating_counts_of)
 
 # NYSEARCA is almost entirely funds. BATS is Cboe's own venue and lists real operating
 # companies (CBOE itself), so it is not treated as an ETF signal.
@@ -141,9 +142,13 @@ def rank(category: str, tickers: list[str], bulk: dict, prices: dict, detail: di
         counts = rating_counts_of(d)
         analyst_based = (category in ("stocks", "all") and counts is not None
                          and sum(counts) >= MIN_ANALYSTS_FOR_RATIO)
+        if category in ("stocks", "all") and not analyst_based:
+            continue
         if analyst_based:
             buy, hold, sell = counts
             total = buy + hold + sell
+            if buy / total < MIN_LIST_BUY_SHARE or sell > MAX_LIST_SELLS:
+                continue
             score = (0.45 * (momentum_score(p, rank_of.get(t)) or 0)
                      + 0.35 * (buy / total if total else 0)
                      + 0.20 * (clip01(((d.get("upside_pct") or b.get("upside_pct") or 0)) / 40) or 0))
@@ -175,8 +180,20 @@ def rank(category: str, tickers: list[str], bulk: dict, prices: dict, detail: di
             "outlook": price_outlook(d, p, b),
             "spiked": (p.get("ret_1m") or 0) >= SPIKE_1M,
             "bearish": (d.get("consensus_rating") or b.get("consensus_rating") or "").lower() in BEARISH_RATINGS,
+            "sector": d.get("sector") or b.get("sector"),
         })
     rows.sort(key=lambda r: -r["score"])
+    kept, _ = one_per_company([r["ticker"] for r in rows],
+                              {r["ticker"]: (bulk.get(r["ticker"]) or {}).get("company")
+                               for r in rows})
+    keep = set(kept)
+    rows = [r for r in rows if r["ticker"] in keep]
+    # Funds have no sector worth capping; everything else keeps at most MAX_PER_SECTOR.
+    if category != "etfs":
+        kept, _ = cap_per_sector([r["ticker"] for r in rows],
+                                 {r["ticker"]: r["sector"] for r in rows}, MAX_PER_SECTOR)
+        keep = set(kept)
+        rows = [r for r in rows if r["ticker"] in keep]
     return rows[:limit]
 
 

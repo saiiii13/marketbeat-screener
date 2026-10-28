@@ -97,20 +97,60 @@ def read_scrolled(page, url: str, settle_ms: int = 700, step_px: int = 600) -> s
     return page.content()
 
 
+def auto_login(page: Page, email: str, password: str) -> str | None:
+    """Fill MarketBeat's login form. Returns the user level it reports afterwards.
+
+    The credentials are used for this one submission and never written anywhere: what
+    persists is the session cookie Chrome keeps in browser_profile/, the same as a login
+    typed by hand.
+    """
+    page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
+    if user_level(page.content()) not in (None, "NotLoggedIn"):
+        return user_level(page.content())
+    page.fill("#cphPrimaryContent_txtUserName", email)
+    page.fill("#cphPrimaryContent_txtPassword", password)
+    page.click("#cphPrimaryContent_btnLogin")
+    page.wait_for_load_state("domcontentloaded", timeout=60_000)
+    page.wait_for_timeout(2500)
+    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
+    return user_level(page.content())
+
+
 def login_flow(timeout_min: int = 15):
+    import os
+    email, password = os.environ.get("MARKETBEAT_EMAIL"), os.environ.get("MARKETBEAT_PASSWORD")
+    if email and password:
+        with Session(headless=True) as s:
+            level = auto_login(s.page(), email, password)
+        if level and level.lower() != "notloggedin":
+            print(f"Logged in to MarketBeat as {email} (user level: {level}). "
+                  f"Session saved in browser_profile/.")
+            return
+        print("MarketBeat did not accept that login - check the email and password, or run "
+              "`python run.py login` without the variables set to log in by hand.",
+              file=sys.stderr)
+        sys.exit(1)
+
     with Session(headless=False) as s:
         page = s.page()
         page.goto(LOGIN_URL)
+        start = user_level(page.content())
         if s.is_logged_in(page):
-            print("Already logged in to MarketBeat - session is saved in browser_profile/.")
-            return
-        print("A Chrome window is open. Log in to MarketBeat there.")
+            if "allaccess" in start.lower():
+                print(f"Already logged in to MarketBeat ({start}) - session is saved in browser_profile/.")
+                return
+            print(f"Logged in to MarketBeat, but only as {start}. Log out in the Chrome window "
+                  f"(account menu, top right) and log in with the All-Access account.")
+        else:
+            print("A Chrome window is open. Log in to MarketBeat there.")
         print(f"Waiting up to {timeout_min} minutes for the login to complete...")
         deadline = time.time() + timeout_min * 60
         while time.time() < deadline:
             try:
-                if s.is_logged_in(page):
-                    print("Login detected. Session saved in browser_profile/. You can close the window.")
+                level = user_level(page.content())
+                if level and level.lower() != "notloggedin" and level != start:
+                    print(f"Login detected ({level}). Session saved in browser_profile/. "
+                          f"You can close the window.")
                     time.sleep(2)
                     return
             except Exception:

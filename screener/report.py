@@ -49,7 +49,8 @@ def fmt_money(x):
     return f"${x:,.0f}"
 
 
-def build_rows(df: pd.DataFrame, top_n: int) -> list[dict]:
+def build_rows(df: pd.DataFrame, top_n: int, verdicts: dict | None = None) -> list[dict]:
+    verdicts = verdicts or {}
     rows = []
     ranked = df[df["excluded"] == ""].head(top_n)
     for _, r in ranked.iterrows():
@@ -57,7 +58,11 @@ def build_rows(df: pd.DataFrame, top_n: int) -> list[dict]:
         rc = r["rating_counts"] or {}
         total = sum(rc.values()) or 0
         comp = r["components"]
+        v = verdicts.get(r["ticker"]) or {}
         rows.append({
+            "verdict": v.get("verdict"),
+            "verdict_note": (v.get("fails") or v.get("warns") or ["clean on every check"])[0]
+                            if v else None,
             "rank": as_int(r["rank"]) or 0,
             "ticker": r["ticker"],
             "company": r["company"],
@@ -134,10 +139,14 @@ def build_rows(df: pd.DataFrame, top_n: int) -> list[dict]:
     return rows
 
 
-def render(df: pd.DataFrame, stats: dict, top_n: int, run_date: str) -> str:
-    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html"]))
+def render(df: pd.DataFrame, stats: dict, top_n: int, run_date: str,
+           verdicts: dict | None = None) -> str:
+    # The template is named dashboard.html.j2, so a rule keyed on ".html" never matched and
+    # scraped headlines and company names went into the page unescaped. Match ".j2" too.
+    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)),
+                      autoescape=select_autoescape(["html", "j2"]))
     tpl = env.get_template("dashboard.html.j2")
-    rows = build_rows(df, top_n)
+    rows = build_rows(df, top_n, verdicts)
     excluded = df[df["excluded"] != ""][["ticker", "company", "excluded"]].head(40).to_dict("records")
     html = tpl.render(
         rows=rows, stats=stats, run_date=run_date, top_n=top_n, excluded=excluded,

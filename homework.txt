@@ -435,6 +435,832 @@ PART 4 — HOW THIS CONNECTS TO THE SCREENER
     precisely because the analyst-based model does not transfer to them, and
     pretending otherwise would generate confident nonsense.
 
+================================================================================
+PART 5 - THE SECOND OPINION: CHECKING THE PICKS ON MARKETBEAT
+Added 2026-10-06
+================================================================================
+
+5.1 WHY A SECOND SOURCE AT ALL
+--------------------------------------------------------------------------------
+The screener picks stocks from Yahoo Finance. Every filter it applies - twenty
+or more buy ratings, three or fewer holds, no sells, a consensus target above
+the current price - is applied to numbers that arrive from a single undocumented
+endpoint, with no contract, no support, and no guarantee that the figure is even
+self-consistent. If that endpoint is wrong, or if a parser misreads it, the
+screener does not fail loudly. It produces a confident, well-formatted list of
+stocks that nobody checked.
+
+This has already happened twice in this project. Relative volume was read as a
+ratio when it is published as a percentage, so a stock trading 27% BELOW its
+average volume was scored as though it were trading 72 times heavier than
+normal. Free cash flow was labelled in dollars when the figure was in New Taiwan
+dollars, turning US$23B into a reported $730B. Both were wrong by a wide margin,
+both looked entirely plausible on the dashboard, and both were found by accident
+rather than by a check.
+
+So the last stage of the pipeline does not look for new stocks. It takes the
+stocks already chosen and asks a second, independent organisation the same
+questions. MarketBeat compiles analyst ratings itself, from its own providers -
+Benzinga among them - so its buy/hold/sell count for a stock is an independent
+count, not a copy of Yahoo's. Where the two agree, the number is probably real.
+Where they disagree, one of them is wrong, and a stock should not be bought on
+the strength of a line that two sources cannot confirm.
+
+Note what this can and cannot do. It cannot make a stock good; nothing in this
+stage can add a name to the list. It can only reject one. That asymmetry is
+deliberate: a confirmation stage that can promote stocks becomes a second
+screener with half the data behind it.
+
+
+5.2 THE THIRTEEN CHECKS
+--------------------------------------------------------------------------------
+Each pick's MarketBeat pages are read - the overview, forecast, earnings,
+short-interest, insider-trades, institutional-ownership, options and news tabs -
+and each of the following becomes a check that passes, warns, or fails.
+
+  1   Analyst forecast      MarketBeat's own buy/hold/sell ratio. Judged as a
+                            proportion, not matched against Yahoo's count: the
+                            two poll different brokers, so a stray sell is
+                            normal. Fails under 60% buys, on a bearish
+                            consensus word, on two or more sells amounting to
+                            over a tenth of coverage, or on a quarter of the
+                            coverage saying sell. 60-80% buys warns.
+  2   Coverage              eight or more analysts passes; three to seven warns;
+                            fewer fails. A consensus of two is not a consensus.
+  3   Consensus trend       buy ratings now against buy ratings a month ago.
+                            Decaying coverage warns even when the level is high.
+  4   Price target          upside to MarketBeat's consensus target. Negative
+                            fails outright; under 5% warns.
+  5   Recent actions        upgrades, downgrades, target raises and cuts in the
+                            last thirty days. More downgrades than upgrades
+                            fails.
+  6   MarketRank            MarketBeat's own percentile and its analyst
+                            sub-score out of five.
+  7   Earnings record       beat rate over the last four quarters, plus the
+                            average surprise. Under 75% warns.
+  8   Earnings event        a report landing inside the holding window warns:
+                            a one-month position through an earnings date is a
+                            different bet than the screener scored.
+  9   Short interest        over 20% of float fails, 10-20% warns.
+ 10   Insider activity      ninety-day buy and sell dollar values.
+ 11   Institutional flow    funds adding against funds trimming.
+ 12   Options               whether the position can be hedged at all.
+ 13   Fact check            see 5.3. This is the one that answers "is the data
+                            true", and the only check that can fail a stock on
+                            grounds that have nothing to do with the company.
+
+Any failure rejects the stock. Two or more warnings make it mixed. Everything
+else is confirmed. The verdict is reported with the percentage of checks that
+came back clean, so "confirmed on 11 of 13" and "confirmed on 6 of 13, the rest
+unavailable" do not read the same.
+
+
+5.3 THE FACT CHECK
+--------------------------------------------------------------------------------
+Twelve numbers are put side by side - share price, consensus target, upside,
+analyst count, market cap, P/E, PEG, short percentage of float, institutional
+and insider ownership, dividend yield, beta - plus the buy/hold/sell breakdown
+as a thirteenth row. Each has a tolerance, because two organisations computing
+the same quantity from different filings on different days will never match to
+the cent.
+
+Three details matter more than the list itself.
+
+Proportions, not counts, for the ratings. Comparing 54/1/0 against 58/2/1 as raw
+numbers makes them look like a contradiction; they are the same consensus
+measured over slightly different analyst sets. The comparison is on the share of
+buys and the share of sells, with fifteen and ten percentage points of slack.
+What it is built to catch is the real failure: one source showing an
+overwhelming buy consensus while the other shows a hold.
+
+Staleness is not disagreement. A stored price from last week will not match
+today's quote, and that says nothing about whether the data was ever true. When
+the stored row predates the check, price and upside are marked stale rather than
+disputed, and they cannot fail the stock.
+
+Only three fields can reject on their own: the ratings breakdown, the consensus
+target, and the price. Those are the figures the pick was actually made on. PEG
+disagreeing is worth knowing - on NVDA the two sources report 0.29 and 1.81,
+which is a six-fold difference arising from different growth assumptions - but
+it is a methodology difference, not evidence that either page is lying, so it
+warns.
+
+Measured on the first real run, NVDA matched on twelve of thirteen figures and
+Energy Transfer on twelve of thirteen. The disagreements were PEG and insider
+ownership percentage respectively. Neither stock was rejected on the data; both
+came back mixed on company grounds - heavy insider selling and net fund
+trimming for NVDA, a beat rate of one quarter in four for Energy Transfer.
+
+One bug this stage found in its own first run is worth recording, because it is
+the exact failure the stage exists to prevent. The URL for each stock was taken
+from the stored universe row, which in the Yahoo era holds a Yahoo Finance
+address. The "MarketBeat check" was therefore re-reading Yahoo pages, parsing
+them with MarketBeat's parsers, and reporting agreement with itself. It now
+builds marketbeat.com addresses from the exchange code and verifies the page
+exists before reading it. A verification stage that silently verifies against
+the source it is meant to be independent of is worse than no verification at
+all, because it produces confidence rather than doubt.
+
+
+5.4 IS THERE A TRUSTED MARKETBEAT API
+--------------------------------------------------------------------------------
+No. This was checked properly rather than assumed.
+
+MarketBeat publishes no developer API and no data feed. Its FAQ covers accounts,
+subscriptions, newsletters, alerts, data sources and CSV export for All-Access
+members, and says nothing about programmatic access; there is no developer
+portal, no API documentation and no published endpoint. The only sanctioned
+machine-readable route out of an All-Access account is the Excel/CSV export
+button on the screener and list pages. Anything else - including what this
+project does - is reading the HTML of pages the account is entitled to see.
+
+That is worth being clear-eyed about. Scraping a logged-in session is not an
+API: the markup can change without notice, there is no rate-limit contract, and
+the terms of service govern what the data may be used for. For a private tool
+making private decisions this is a reasonable risk. It would not be a reasonable
+foundation for anything redistributed.
+
+The ratings themselves do have a real API, one layer upstream. MarketBeat's
+analyst-ratings data comes from Benzinga and other providers, and Benzinga sells
+a documented commercial API: an analyst-ratings endpoint covering US equities
+with history back to 2013, JSON or XML, intraday delivery, ratings expressed in
+the analyst's own language rather than normalised. Overnight changes publish
+roughly three hours before the US open. It is key-authenticated and paid -
+pricing is quote-only, not listed - and it is the only properly trusted,
+supported source of this specific data at a reachable price point.
+
+The practical conclusion for this project: keep MarketBeat as the second opinion
+through the logged-in browser, because the subscription is already paid for and
+the stage reads only a handful of stocks per run. If the project ever needs
+ratings data it can depend on - as a primary source, on a schedule, or for
+anything shared with anyone else - the answer is a Benzinga key, not a better
+scraper.
+
+  Sources checked 2026-10-06:
+    https://www.marketbeat.com/faq                       (no API documented)
+    https://en.wikipedia.org/wiki/MarketBeat             (ratings via Benzinga)
+    https://www.benzinga.com/apis/cloud-product/analyst-ratings-api
+    https://docs.benzinga.com/api-reference/calendar-api/get-ratings.md
+
+
+5.5 THE FIRST VERSION WAS TOO STRICT, AND WHY
+--------------------------------------------------------------------------------
+The check originally rejected any stock with a single sell rating on MarketBeat,
+mirroring the screener's own zero-sell filter. Run against a real shortlist it
+rejected almost everything: Microsoft at 41 buy / 5 hold / 2 sell and Synopsys
+at 18 / 3 / 1 both failed, as did eight of eleven stocks in a menu run.
+
+The mistake was treating MarketBeat as a copy of Yahoo that had to agree analyst
+for analyst. It is not. The two poll different sets of brokers, so one or two
+sells out of fifty is the normal state of affairs, not a contradiction. What
+MarketBeat is actually being asked is whether *its own* ratio says the stock
+goes up.
+
+So the rule is now proportional. 85% buys with two sells out of forty-eight is a
+buy-weighted ratio and warns; 36% buys with a Hold consensus is not and fails.
+On the same eleven stocks that produced ten rejections, the proportional rule
+gives five mixed and six rejected - and the six are rejected for reasons that
+mean something: Frontline at 36% buys and Nordic American at 25% with Hold
+consensuses, SRZN and ABSI with 27.7% and 24.3% of their float sold short, PICS
+on a fresh downgrade.
+
+One detail matters for thinly covered stocks. A lone sell among nine analysts is
+11% of coverage, which would trip a flat ten-percent rule on arithmetic alone.
+Failing therefore needs either two sells above that tenth, or a quarter of the
+coverage however thin it is.
+
+The same lesson applies to the figures. Requiring every number to match made
+ordinary methodology differences look like lies - PEG at 0.29 against 1.81 is
+two different growth assumptions, not a false page. A disagreement now fails a
+stock only when it would have changed the answer: a price more than 10% apart,
+a target below the price where ours was above it, or a consensus pointing down
+where ours pointed up.
+
+5.6 HOW TO RUN IT
+--------------------------------------------------------------------------------
+    python run.py login                  once, to save the All-Access session
+    python run.py verify                 check today's ranked picks
+    python run.py verify --verify-top 20 check more of them
+    python run.py verify --headless      no visible Chrome window
+    python run.py all --no-verify        skip the stage in a full run
+
+From the menu, M on the results screen checks the stocks on screen and shows
+each verdict as it lands. Verdicts are stored in the verify table, keyed by
+date, alongside the full MarketBeat read they were based on.
+
+Eight page loads per stock at half a second apiece puts one stock at roughly ten
+seconds, so the default of ten picks takes under two minutes. Logged out it
+still works, but the paywalled columns come back blank and fewer checks can run.
+
+
+================================================================================
+PART 6 - THE THIRD SOURCE: NASDAQ, AND THE REST OF THE API SURVEY
+Added 2026-10-06
+================================================================================
+
+6.1 WHAT WAS LOOKED FOR
+--------------------------------------------------------------------------------
+Part 5 established that MarketBeat has no API and that the ratings underneath it
+come from Benzinga, which does sell one. That left an open question: is there a
+source of analyst consensus that is free, needs no login, and can be called like
+an API rather than scraped?
+
+Five candidates were tested from this machine rather than read about.
+
+  nasdaq.com backend    HTTP 200, no key, real data      <- works
+  Alpha Vantage         HTTP 200 with the demo key       <- works, documented
+  Finnhub               HTTP 401 "Please use an API key" <- free key available
+  Financial Modeling    HTTP 401 "Invalid API KEY"       <- free key available
+  stockanalysis.com     HTTP 404 on the guessed path     <- not pursued
+
+6.2 THE NASDAQ BACKEND
+--------------------------------------------------------------------------------
+nasdaq.com serves its own stock pages from a JSON backend at api.nasdaq.com that
+answers without a key, a token or a login. Six endpoints were confirmed working:
+
+  analyst/{sym}/targetprice        consensus buy/hold/sell, low/mean/high target,
+                                   and a twelve-month history of the consensus
+  analyst/{sym}/ratings            mean rating, analyst count, broker names
+  quote/{sym}/short-interest       the semi-monthly reports, days to cover
+  company/{sym}/institutional-     institutional ownership %, holders that
+    holdings                       increased and decreased positions
+  company/{sym}/insider-trades     open-market buys and sells, 3 and 12 months
+  company/{sym}/earnings-surprise  reported EPS against consensus, by quarter
+
+That is most of what the eight MarketBeat tabs give, from a different compiler,
+for nothing. For NVDA on 2026-10-06 it returned 32 buys / 0 holds / 0 sells from
+39 analysts, a mean target of 325.03 against a last price of 239.42, short
+interest of 294,225,803 shares at 2.55 days to cover, 79.53% institutional
+ownership with 3,374 holders adding and 2,575 trimming, 2 insider buys against
+17 sells in three months, and four consecutive earnings beats averaging +7.4%.
+
+Three limits are worth writing down plainly.
+
+It is not a documented public API. It is the site's own backend: no published
+contract, no versioning promise, no rate-limit statement. Eight sequential calls
+took 26 seconds with no block, which is about 3.3 seconds a call - slow enough
+that the client fetches a stock's seven endpoints in parallel, making a stock
+take about as long as its slowest call instead of seven times as long.
+
+Coverage is patchy. NVDA, SOFI and TSM return a consensus; ET and BRK.B return
+an empty one. A stock Nasdaq does not cover is reported as unknown and warns,
+never as a failure - absence of data is not evidence against a stock.
+
+It publishes shares short but not the percentage of float, so the percentage is
+computed from shares outstanding. Outstanding is larger than float, so the
+figure runs slightly low: 1.22% for NVDA against Yahoo's 1.27% and MarketBeat's
+1.30%. Close enough to cross-check, not close enough to quote.
+
+6.3 THE DOCUMENTED ALTERNATIVES
+--------------------------------------------------------------------------------
+Alpha Vantage's OVERVIEW endpoint returns AnalystRatingStrongBuy, Buy, Hold,
+Sell and StrongSell plus AnalystTargetPrice - the exact five-bucket breakdown
+this project filters on - and it is a real documented API with a free key. For
+IBM through the public demo key it returned 3 strong buy, 10 buy, 10 hold, 1
+sell, 1 strong sell and a target of 240.59. The catch is the free tier: 25
+requests a day and 5 a minute. That is enough to verify a ten-stock shortlist
+once a day and nothing more. Paid tiers start at $49.99/month for 75 requests a
+minute.
+
+Finnhub has /stock/recommendation (the buy/hold/sell breakdown by month) on its
+free tier at roughly 60 calls a minute, non-commercial use only; /stock/price-
+target is premium. A free key would cover the ratings half of a cross-check at a
+much higher call budget than Alpha Vantage allows.
+
+Financial Modeling Prep has /stable/grades and a price-target-consensus
+endpoint. Both need a key; a free tier exists with limits.
+
+Polygon (now Massive) resells Benzinga's ratings through its own REST API, with
+individual plans at $0, $29, $79 and $199 a month, the Benzinga datasets sitting
+on the paid tiers. This is the cheapest properly-licensed route to the data that
+MarketBeat itself is built on, and the one to take if ratings ever need to be
+dependable rather than merely checked.
+
+6.4 WHAT WAS ACTUALLY BUILT
+--------------------------------------------------------------------------------
+Nasdaq, as a third source inside the verification stage, in screener/nasdaq.py.
+MarketBeat still carries the company judgement - it has MarketRank, news
+sentiment, the full upgrade history and the options tab, none of which Nasdaq
+exposes - and Nasdaq now adds two things to every stock:
+
+  - its own consensus check: buy/hold/sell counts and target upside from the
+    brokers reporting to the exchange, which fails a stock if more than a sixth
+    of them rate it a sell and warns if fewer than 60% say buy
+  - a second vote on every figure in the fact check
+
+That second vote changes what the fact check means. With one other source, a
+figure either matched or it did not, and a single methodology difference looked
+like a contradiction. With two, each row is confirmed (at least one source
+agrees), disputed (every available source disagrees), or unconfirmed (nobody
+else publishes it). Only a disputed core figure - the ratings breakdown, the
+consensus target, or the price - fails the stock.
+
+Measured on NVDA and Energy Transfer, 2026-10-06:
+
+  NVDA    MIXED, 71% of checks clean
+          12 of 13 figures confirmed. Price agreed to the cent across all three
+          (239.24 / 239.24 / 239.42), targets within 7 dollars of each other,
+          and the ratings agreed as proportions despite the raw counts reading
+          58/2/1, 54/1/0 and 32/0/0. Only PEG was disputed, at 0.29 against
+          MarketBeat's 1.81 - a growth-assumption difference, not a lie.
+          Mixed on company grounds: $399M of insider selling, more funds
+          trimming than adding, a target cut inside the month.
+
+  ET      MIXED, 79% of checks clean
+          12 of 13 confirmed by MarketBeat. Nasdaq publishes no consensus for
+          it, which warns rather than failing. Insider ownership disputed,
+          10.29% against 3.28%. Mixed on company grounds: it beat estimates in
+          one quarter of the last four.
+
+Neither was rejected, and the one real data disagreement on each stock was
+visible with both readings printed beside it. That is the whole point: a figure
+nobody can confirm should be looked at rather than traded on.
+
+6.5 RUNNING IT
+--------------------------------------------------------------------------------
+Nothing extra is needed - no key, no account. The Nasdaq calls happen alongside
+the MarketBeat read in the same stage.
+
+    python run.py verify                 both sources, today's ranked picks
+    python run.py verify --headless       no visible Chrome window
+
+From the menu, M on the results screen checks the stocks on screen; each row
+shows the verdict, how many figures were confirmed, and which sources confirmed
+them. O opens the MarketBeat page for the selected stock, N opens the Nasdaq
+page.
+
+A stock costs about eight MarketBeat page loads and seven Nasdaq calls, the
+Nasdaq ones in parallel, which comes to roughly fifteen seconds a stock.
+
+
+================================================================================
+PART 7 - DOES ANY OF THIS WORK? BACKTESTS, A WEEK OF REAL PICKS, AND TIME TRAVEL
+Added 2026-10-15
+================================================================================
+
+7.1 THE QUESTION
+--------------------------------------------------------------------------------
+Everything up to Part 6 is about whether the screener reads its data correctly.
+None of it says whether the stocks it picks go up. This part tests that three
+ways, from the most direct to the most thorough, and reports what came back
+including the parts that are unflattering.
+
+
+7.2 A WEEK OF REAL PICKS
+--------------------------------------------------------------------------------
+The run of 2026-10-06 produced fifteen ranked stocks. One week later (Oct 13):
+
+  5 of 15 rose. The average pick fell 2.20% while the S&P 500 was flat (-0.14%).
+  By Oct 15 the average pick was down 5.09% against the S&P's -0.94%.
+  The two stocks the verification stage CONFIRMED, AVGO and TSM, fell the most:
+  -6.32% for the week and -10.41% to date.
+
+The weekly price ranges were too narrow. Only 8 of the 15 closes landed inside
+the 68% range (about 10 should have) and 13 of 15 inside the 95% range (about
+14). The ranges were built from 20-day volatility measured during a calm stretch.
+
+The single biggest cause of the loss was concentration. CLS, AVGO, ANET, TSM and
+SNPS - five of the top eight - are all chip and AI-hardware companies, and they
+fell together. Scoring each stock on its own never noticed.
+
+One correction worth recording. The large percentages shown beside each stock,
+like AVGO's +41%, were analysts' 12-month price targets. The screener's
+one-week figure was always a range centred on no change. A one-week test can
+check the range, not the target.
+
+
+7.3 THE BACKTEST: DOES THE CONSENSUS PREDICT THE NEXT MONTH?
+--------------------------------------------------------------------------------
+Nasdaq's analyst endpoint returns the consensus for each of the last twelve
+months, which is the one piece of history this test needs and neither
+MarketBeat nor Yahoo will give out. 400 random liquid stocks were drawn; 176 had
+usable history, for 2,043 stock-months from 2025-10 to 2026-09. Each month's
+buy/hold/sell count was paired with what the stock did next.
+
+Two precautions. Returns are measured against the average sampled stock in the
+same month, so a rising market is not credited to the ratings. And significance
+is judged across months rather than stock-months: stocks move together, so two
+thousand observations from twelve months behave more like twelve.
+
+                                    next week          next month
+                                  vs avg     t       vs avg     t
+  95%+ of analysts say buy        +0.78%   2.2       +1.80%   1.6
+  passes the verification line    +0.40%   2.3       +0.62%   1.4
+  buy ratings rising              +0.19%   0.3       +0.08%  -0.1
+  zero sells                      +0.03%   0.4       +0.05%   0.5
+  the brief: 20+ / <=3 / 0        -0.50%  -0.7       -2.37%  -2.0   (29 cases)
+  rank correlation, buy share -> next month's return: +0.012 (t=0.4)
+
+A t under about 2 means the result could easily be chance, and with 24 groups
+tested about one would cross 2 by luck alone. Four did, and they do not agree
+across horizons. The honest reading: at most a faint edge at the very top of
+the buy-share scale over a week, gone by a month, and no sign that the 20/3/0
+shape works.
+
+
+7.4 TIME TRAVEL
+--------------------------------------------------------------------------------
+`python run.py timetravel` goes back to the first trading day of each of the
+last twelve months and rebuilds what the screener could have known that day:
+Nasdaq's consensus as it stood, and every price measure computed from closes up
+to that day and none after. It then runs the live scoring function on that data
+and holds the top ten for a month. The rule sets differ only in the fixes, so
+each one's effect shows on its own.
+
+What cannot be replayed is held equal for every stock so it cannot tilt the
+ranking: upgrades, price targets, MarketBeat's features, beta, earnings dates
+and insider trades. Nobody publishes their history. The replay therefore tests
+the consensus and the price signals - the part that can be reconstructed
+honestly.
+
+1,200 stocks drawn, 483 with enough history, 12 months:
+
+  S&P 500 over the year +11.9%, the average sampled stock +18.0%
+
+  rules              1 month   vs avg     t    beat avg   grew to
+  old (20/3/0)        -0.73%   -2.18%  -1.9     5/12      -9.1%   (3.4 picks a month)
+  old, scaled 12/2/0  +0.13%   -1.31%  -1.4     3/12      +0.9%
+  + sector cap        -0.03%   -1.47%  -1.4     4/12      -1.2%
+  + 95% buys          +6.52%   +5.07%   1.8     8/12    +102.4%
+  new (95% + cap)     +5.80%   +4.35%   1.5     8/12     +86.7%
+
+The 20/3/0 rule as written found only 3.4 stocks a month, because Nasdaq counts
+fewer analysts than Yahoo - 27 against 47 on AVGO - so twenty buys on Nasdaq is
+a much stricter cut. The 12/2/0 version scales it to Nasdaq's counts.
+
+The +102% needed checking before it could be believed, and it does not survive.
+
+It is not one lucky pick. ERAS rose 195% in January 2026, but without every move
+over 50% the rule still averaged +4.9% a month, and the median pick +2.0%
+against the old rules' -0.02%.
+
+It is mostly a size tilt. Asking for 95% of analysts to say buy is easy to meet
+with five analysts and hard with forty, so the rule fills up with thinly covered
+smaller companies - ECPG, AROC, ENVA, LGND - while the old rules held MSFT, KO,
+GOOG and V. In this particular year, fewer analysts meant higher returns
+whatever the rating: stocks with 3-5 analysts averaged +2.41% a month, with 21+
+only +0.47%.
+
+And survivorship bias inflates exactly that tilt. The sample is drawn from
+companies worth $2B or more today. A small company that soared during the year
+grew into the sample; one that collapsed fell out of it.
+
+The fair test compares each 95%-buy stock with others followed by the same
+number of analysts:
+
+  analysts    95%+ buy vs same-coverage peers     t
+  3-5              +2.91% a month                1.5
+  6-10             +5.03%                        1.6
+  11-20            -3.99%                       -1.6
+
+Not significant anywhere, and the sign flips. That is noise, not a signal, and
+the screener keeps the 20/3/0 rule. Switching would have turned it into a
+small-cap bet with a backtest that flatters it.
+
+
+7.4b THE REPLICATION - AND WHY IT MATTERS MORE THAN THE FIRST RESULT
+--------------------------------------------------------------------------------
+The replay was run a second time after a fresh pipeline run. The same random
+seed drew from a refreshed universe, so the stocks were different - and the
+ranking of the rules turned over completely:
+
+  rules                first sample     second sample
+  old (20/3/0)            -9.1%            +73.7%   (2.9 picks a month, 66% one sector)
+  old, scaled 12/2/0      +0.9%             -8.5%
+  + sector cap            -1.2%             -8.0%
+  + 95% buys            +102.4%            +24.3%
+  new (95% + cap)        +86.7%            +23.9%
+
+Against same-coverage peers in the second sample: old +3.15% (t=1.2), scaled
+-1.67% (t=-1.5), 95% buys +0.27% (t=0.3). Nothing significant, again.
+
+A rule with a real edge wins on both samples. Here the winner depends on which
+stocks were drawn, which is what noise looks like. The +102% was never a
+finding; it was one draw. Neither was the +73.7%, which came from fewer than
+three stocks a month crowded two-thirds into one sector.
+
+Two results did replicate, and those are the ones the screener now acts on:
+
+  - One-year volatility gave the best-calibrated ranges both times, off by 2.2
+    and then 2.4 points against the 20-day measure's 8.1 and 7.4.
+  - The sector cap changed returns by a fraction of a point either way in both
+    samples (-1.2% vs +0.9%, then -8.0% vs -8.5%). It costs almost nothing, and
+    on the real 2026-10-06 list it would have halved that week's loss.
+
+Everything about which consensus rule picks better stays unproven.
+
+
+7.5 WHAT WAS CHANGED, AND WHAT IT DID
+--------------------------------------------------------------------------------
+Sector cap - at most three picks per sector, in the dashboard ranking and the
+menu. It needed a fix of its own first: Yahoo's screener has never returned
+sectors (0 of 22,786 stocks), so sector and industry now come from Yahoo's
+assetProfile, inside the analyst request already being made. Stocks with no
+known sector are never capped together. On the real 2026-10-06 list the cap
+drops SNPS, AVGO and ANET for PR, BAC and LNG, and that week's top ten would
+have fallen 2.10% instead of 4.57%. In the twelve-month replay it cost 0.2 to
+0.7 points a month - concentration in winners helped in a rising year. It stays,
+as risk control rather than a return booster.
+
+Volatility for the price ranges - switched from 20-day to one-year. Over 5,737
+stock-weeks, the share of next-week closes inside each band (targets 68.3% and
+95.4%):
+
+  20d     65.0% / 90.6%    the original: too narrow, worst in the tails
+  1y      68.9% / 93.8%    closest on both - now the default
+  max     72.3% / 95.1%
+  blend   67.5% / 93.3%
+
+Consensus rule - a switch was added ("share", 95% of analysts saying buy) and
+left off, for the reasons in 7.4.
+
+Odds table - calibrate.py drew its sample as the first 300 tickers in
+alphabetical order, so the "measured odds" in the menu came almost entirely
+from stocks beginning with A. It now uses the same seeded random sample as the
+backtest.
+
+
+7.6 THE CONCLUSION
+--------------------------------------------------------------------------------
+The price ranges are now close to honest: about 69% of outcomes inside a 68%
+band. The stock selection is not shown to beat the market by any test here. The
+analyst consensus carries, at most, a faint short-lived edge that disappears
+once company size is controlled for.
+
+That makes the screener good at something real and unremarkable: narrowing
+22,000 listings to a shortlist of liquid, well-covered, analyst-favoured names
+with their risks laid out and cross-checked against two other sources. It does
+not make the shortlist a prediction. Anything bought from it should be sized as
+though the edge were zero, because on this evidence it nearly is.
+
+Every number in this part can be regenerated:
+
+    python run.py backtest   --backtest-sample 400
+    python run.py timetravel --backtest-sample 1200
+
+with --seed for a different random sample. Observations, monthly results and
+every replayed pick are written to data/.
+
+
+================================================================================
+PART 8 - MARKETBEAT ONLY: A DATABASE THAT REMEMBERS, A BACKTEST, A PLANNER
+Added 2026-10-25
+================================================================================
+
+8.1 WHAT CHANGED
+--------------------------------------------------------------------------------
+Yahoo Finance is gone: the code that read it, its imports, its settings and the
+yfinance requirement. MarketBeat is now the only source of every figure -
+candidates, buy/hold/sell counts, price targets, rating history and daily
+prices. Parts 1 to 7 describe the Yahoo-era pipeline and are left as they were,
+as the record of how the project got here.
+
+Candidates come from about seventy of MarketBeat's research lists (upgrades, top
+rated, breakouts, every sector). For each one the program reads three MarketBeat
+pages: the overview (company, sector, price, volume), the chart (a year of daily
+closes) and the forecast (the count, the target, MarketBeat's own counts from 1
+month, 3 months and 1 year ago, and every analyst action listed).
+
+The first run read 2,364 stocks in 15 minutes and stored 557,124 daily closes. A
+second run the same day took 1.8 minutes: stocks already read today and price
+history already current were not fetched again.
+
+
+8.2 THE DATABASE
+--------------------------------------------------------------------------------
+Everything goes into data/screener.db (SQLite, created on first run, schema in
+screener/db.py). Two kinds of table:
+
+  working   today's run only - the ranked list, scores, the dashboard's inputs
+  history   never cleared - prices, rating snapshots, rating actions, runs,
+            recommendations, backtests and their trades, holdings, plans
+
+Earlier runs deleted the whole database first. That is why nothing could be
+backtested from it: every run threw the previous one away.
+
+
+8.3 THE PAST, REBUILT
+--------------------------------------------------------------------------------
+A backtest has to know what MarketBeat showed on a past day. Its free pages
+publish only four dated counts per stock (now, 1 month, 3 months, 1 year ago),
+so the others are rebuilt from the analyst actions:
+
+  1. each firm's latest rating on or before the day, if under a year old;
+  2. for firms whose older actions have scrolled off the page, the rating is
+     read backwards from their next action - an upgrade names the old rating,
+     a target change keeps it, an initiation means there was none;
+  3. the result is anchored to MarketBeat's own published counts on either side.
+
+Checked against those published counts, the rebuilt buy share lands within 5
+points for 83% of stocks one month back and 71% three months back. That is good
+enough to rank by, and not good enough to trust blindly; every backtest says how
+many of its picks were made on rebuilt counts.
+
+
+8.4 THREE BACKTESTS
+--------------------------------------------------------------------------------
+Strategy: hold the stocks with the best ratio score, re-check after the holding
+period, keep the ones still near the top, replace the rest. Whole shares, no
+commissions, valued at MarketBeat's closes.
+
+  #   stocks              period                  hold  return  buy&hold   S&P  trades  win
+  9   all 2,226 stored    2025-10-23 - 2026-10-23 10/21d +40.3%   +6.2%  +13.1%   29   66%
+  10  latest top 20 (*)   2026-04-23 - 2026-10-23  5/10d  +8.0%  +18.6%   +7.3%   10   50%
+  11  20 large caps       2026-07-23 - 2026-10-23  3/5d   +7.5%   +4.2%   +3.0%    3  100%
+  (*) chosen by today's ratings: hindsight, flatters the strategy
+
+Every result was audited: the money balances to the cent, the win rate and
+drawdown recompute, every trade price is a stored close, and every pick had
+rating data dated on or before the trade.
+
+What looked wrong, and what it turned out to be:
+
+  - The first version of #9 returned +75%. Two trades made 70% of it, because
+    a stock replacing a sold one got all the freed cash (HBM took a quarter of
+    the portfolio). New positions now get an equal share of the portfolio.
+    It also held GOOG and GOOGL at once; one listing per company now.
+  - Shifting #9's start by a week moved buy-and-hold from +6% to +58%. One
+    stock (ELOX) showed a thousandfold gain - a 1-for-1000 reverse split
+    MarketBeat's chart never adjusted for. 57 stocks have one-day moves of 3x
+    or more; they are now left out and the backtest says so. Nothing under $1
+    is bought.
+  - #11 traded three times in three months: the ratio ranking of large caps
+    barely changes week to week, so "re-check every 5 days" rarely trades,
+    and its 100% win rate is three trades.
+  - #9 still beats the S&P with its two best stocks removed (+21%), and with
+    the start moved by up to a month (+30% to +40%). But rebuilt counts can
+    credit a firm with a rating it had not yet issued, if its initiation
+    scrolled off the page. Using only MarketBeat's own published counts - no
+    rebuilding at all - the top 10 made +19.7% against the S&P's +12.2%, but
+    all of it in one two-month stretch; the top 20 made +4.6% and the top 50
+    +4.1%, both behind the market.
+
+
+8.5 THE CONCLUSION
+--------------------------------------------------------------------------------
+Same as part 7. The buy/hold/sell ratio picks companies analysts agree on. On
+this year's data its best case beat the market and its cleanest test did not,
+which is what no edge looks like. The planner and the backtest are tools for
+sizing and checking decisions, not evidence that the list predicts returns.
+
+    python run.py replay --start 2025-10-23 --cash 10000 --picks 10 --hold 21
+    python run.py backtests
+    python run.py plan --cash 5000
+
+Every backtest is saved in the database and listed by the menu (B, then H).
+
+
+
+================================================================================
+PART 9 - THE PRICE CHART: SHOWN BESIDE THE RATIO, TESTED AS A RULE
+Added 2026-10-26
+================================================================================
+
+9.1 WHAT IS SHOWN
+--------------------------------------------------------------------------------
+Every list now shows each stock's 1-week, 1-month and 1-year price change - the
+ranges on MarketBeat's own chart - beside its buy/hold/sell count. They are
+worked out from the closes already stored, ending at the price MarketBeat showed
+on the day's run, so they cost no extra requests. Under the list, the selected
+stock's other overview-page facts: sector, P/E and PEG, projected earnings
+growth, short interest, insider buying and selling, news mood, institutional
+ownership. Those are today's readings only; MarketBeat keeps no history of
+them, so they can be shown but not backtested.
+
+9.2 SHOULD THE CHART CHANGE THE RANKING?
+--------------------------------------------------------------------------------
+Price history is stored, so trend rules can be replayed. Four were tried, each
+on top of the ratio ranking (top 10 or 20, re-checked every 10 or 21 days):
+
+  ratio only     the current list
+  up1m           skip stocks down over the last month
+  up3m           skip stocks down over the last 3 months
+  blend3m        score = 70% ratio + 30% rank of 3-month change
+
+132 replays: 8 start dates from 2026-01-26 to 2026-05-04 run to 2026-10-23, and
+three separate 3-month blocks, each with three settings.
+
+                 average  beats ratio-only  beats S&P  avg max drawdown
+  ratio only     +13.8%         -             23/27        -9.8%
+  up1m            +5.2%        4/27            6/27       -11.6%
+  up3m           +15.9%       19/27           22/27       -10.4%
+  blend3m        +16.5%       19/27           24/27       -15.2%
+  (the windows overlap - they all end on the same day - so they are not 27
+  independent results)
+
+Skipping last month's losers is clearly worse: stocks that fell for a month
+tended to bounce back. The 3-month rules look better, and they survived the
+cleanest test too - with rating counts taken only from MarketBeat's own dated
+counts, no rebuilding, up3m beat ratio-only in 6 of 8 runs (+11.4% vs +6.7%).
+
+But where the extra came from:
+
+                    return   two best stocks          share of   without
+                                                      the gain   those two
+  ratio only, Jan    +10.7%   MU, V                     66%        +8.9%
+  up3m, Jan          +15.3%   MU, RBRK                 111%        +5.5%
+  blend3m, Jan       +17.8%   WDC, MU                  126%       -2.7%
+  ratio only, Mar    +18.6%   RBRK, V                   56%       +19.7%
+  up3m, Mar          +19.6%   MU, RBRK                 112%        +1.4%
+  blend3m, Mar       +27.0%   MU, RBRK                  78%        +3.2%
+
+The trend rules made all of their extra, and more, on two or three stocks that
+rode this year's chip and AI run (MU went up about fourfold). Without them the
+trend rules did worse than the plain ratio. They also won fewer trades (39-46%
+against 55%) and fell further at their worst (blend3m -19.7% in backtest #17).
+
+9.3 THE DECISION
+--------------------------------------------------------------------------------
+The ranking stays on the ratio alone. The chart is shown beside it so it can be
+read, and the trend rules are an option in the backtest (B, then T on the last
+step; or `python run.py replay --trend up3m`) for checking again as history
+builds. One year that rewarded chasing a few winners is not enough to make it
+the default. Saved runs: #14 ratio only, #15 up1m, #16 up3m, #17 blend3m
+(2026-01-26 to 2026-10-23, top 10, 21 days).
+
+To undo every change from this part, copy the files in
+data/backups/backup_pre_chart_2026-10-26/ back over the project.
+
+
+PART 10 - NET BUYS: MOST BUYS, FEWEST HOLDS (2026-10-27)
+
+The old list ranked by the buy share (Wilson lower bound), so 37/0/0 (V) beat
+54/1/0 (NVDA). The new score is net buys = buys - 2 x holds - 5 x sells, which
+puts the most analysts saying Buy first: NVDA 52, AMZN 51, GOOGL 44, V 37.
+
+66 backtests (8 rolling starts to 2026-10-23 plus three 3-month blocks; top 10
+and top 20, 21-day holds), nothing saved:
+
+  ranking                 mean    beats old   beats S&P   win    w/o best 2
+  old ratio              +13.1        -         16/22     56%      +3.9
+  net buys               +20.8      20/22       21/22     64%     +10.3
+  net buys, zero sells    +9.7       8/22       15/22     54%      +1.5
+
+Checks on net buys vs the old ratio:
+  - two best stocks removed from the universe and rerun (4 runs): net buys
+    +11.4 to +24.6, old ratio +5.5 to +15.3; net buys still beat the S&P.
+  - MarketBeat's official dated counts only, no rebuilding (8 runs): net
+    buys +12.1 to +25.0 (mean +19.8), old ratio -1.8 to +15.7 (mean +9.2);
+    net buys won 8/8 and beat the S&P 8/8.
+
+Zero sells hurts because some of the best performers had a single sell
+among many buys (RBRK, DDOG, SNOW). The list (ENTER) still shows zero-sell
+stocks only, as asked; config.MAX_LIST_SELLS = 1 lets them back in. The
+backtest ranks by net buys with sells allowed (the -5 handles them).
+Caveat: one year, a year that favoured large, heavily covered tech, and
+most picks still sit on rebuilt counts.
+
+Saved: #21 net buys, top 20, 2026-01-26 to 10-23: +24.47% (S&P +9.71%), 71%
+win rate, -9.04% max drawdown. #22 the same with the 70/30 blend: +23.54%,
+-18.69% drawdown. Undo: data/backups/backup_pre_netbuys_2026-10-27/.
+
+
+
+PART 11 - SHARED SIGNALS, A FIXED BACKTEST, AND WHAT MARKETBEAT'S HISTORY CAN TEST (2026-10-28)
+
+Two independent code reviews changed what earlier parts can claim.
+
+1. The backtest saw the future. ratings.counts_at corrected rebuilt past counts with
+   MarketBeat snapshots dated after the replay day. Fixed in 5d6c82f; removing every later
+   snapshot now changes 0 of 1,800 checked stock-days. Part 10's numbers were inflated:
+   on the fixed backtest (16 windows) old ratio +10.4%, net buys +14.4%, net buys with
+   zero sells +3.4%.
+2. MarketBeat keeps only each firm's latest action. rating_actions holds 33,657 rows for
+   32,776 firm/ticker pairs, all first recorded 2026-10-25..28, and the stored months grow
+   from 663 actions (2025-10) to 8,120 (2026-10). Upgrade/downgrade flow, target revisions,
+   rebuilt targets and target agreement for past days would measure what survived, not
+   what analysts did. signals.py now counts only actions the screener had recorded by the
+   day; the backtest refuses those four rules until enough recorded history exists
+   (upgrades 60 days, target raises 30 days, upside and agreement from 2026-10-25).
+3. The split guard dropped real crashes. It now adjusts MarketBeat's unadjusted splits (the
+   closes before scaled by the factor) and repairs one-day bad prints; 2026-01-26..10-23
+   has 28 splits adjusted and 8 bad prints repaired, and real crashes stay in.
+
+Scan (scripts/scan_signals.py, 88 runs, 21-day holds, top 10 and top 20, 8 windows:
+5 rolling starts to 2026-10-23 and three 3-month blocks; S&P 500 averaged +7.33%):
+
+  rule                                   mean   beats net   beats S&P   max drop   in cash
+  net buys (backtest default)           +13.68      -        14/16       -9.03%      17%
+  net buys + analysts turning positive  +14.70     6/16      14/16       -9.44%      16%
+  my list (36+ buys, <5 holds, 0 sells)  +0.96     2/16       0/16       -2.68%      83%
+  my list, all money in                  +7.53     2/16       6/16      -16.06%       4%
+
+Adoption bar for "analysts turning positive" (all five needed): wins 70% of windows - no
+(6/16); +2 points - no (+1.0); better without its two best stocks - yes (+12.93 vs +10.21);
+better on official counts only - no (+5.08 vs +16.55); drawdown within 3 points - yes.
+Verdict: not adopted; it stays a backtest option (menu B, X).
+
+The menu list keeps the user's rule (more than 35 buys, fewer than 5 holds, no sells). In
+the backtest it qualifies only 2-7 stocks at a time: holding them with the rest in cash
+earned +1%, and putting all the money into them earned +7.5%, about the S&P 500's +7.3%,
+with a deeper worst drop (-16%) because a handful of large tech names fall together.
+Plain net buys (sells allowed, -5 each) did best: +13.7%, ahead of the S&P in 14 of 16
+windows. One year of history, a year good for large tech, so treat it as evidence, not
+a promise.
+
+Restore points: git tags restore-2026-10-28 (before this work) and
+restore-2026-10-28-signals (after it); data/backups/restore_2026-10-28/screener.db.
+
                                     * * *
 
 Not investment advice. Every threshold here is a judgement call, and the
