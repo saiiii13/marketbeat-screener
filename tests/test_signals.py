@@ -71,7 +71,7 @@ def test_no_lookahead(stock, closes):
 def test_empty_stock():
     s = signals.at({"snapshots": {}, "actions": []}, None, DAY)
     assert s["counts"] is None and s["net"] is None and s["net_change_91d"] is None
-    assert s["upgrades_60d"] == 0 and s["target_raises_30d"] == 0
+    assert s["upgrades_60d"] is None and s["target_raises_30d"] is None
     assert s["target_mean"] is None and s["upside"] is None and s["dispersion"] is None
 
 
@@ -84,4 +84,27 @@ def test_describe_line(stock, closes):
 
 def test_describe_empty():
     assert signals.describe(signals.at({"snapshots": {}, "actions": []}, None, DAY)) == \
-        "rating trend 3 mo -  ·  upgrades/downgrades 60 days 0/0  ·  target raises/cuts 30 days 0/0"
+        "rating trend 3 mo -  ·  no analyst actions recorded yet"
+
+
+def test_actions_recorded_later_are_not_used_for_flow_or_targets(stock, closes):
+    # MarketBeat shows only each firm's latest action, so an action is known on D only if the
+    # screener had recorded it by D (first_seen); Alpha's raise was only seen after DAY.
+    seen = {"snapshots": stock["snapshots"],
+            "actions": [dict(a, first_seen="2026-06-01") for a in stock["actions"]]}
+    seen["actions"][1]["first_seen"] = "2026-07-10"
+    s = signals.at(seen, closes, DAY)
+    assert s["target_raises_30d"] == 0 and s["target_cuts_30d"] == 1
+    assert s["target_high"] == 120.0       # Alpha's older target is all that was known
+
+
+def test_no_recorded_actions_means_none_not_zero(stock, closes):
+    later = {"snapshots": stock["snapshots"],
+             "actions": [dict(a, first_seen="2026-10-25") for a in stock["actions"]]}
+    s = signals.at(later, closes, DAY)
+    assert s["counts"] == (2, 1, 0)        # counts still come from the snapshot
+    assert s["upgrades_60d"] is None and s["target_mean"] is None and s["n_targets"] == 0
+
+
+def test_n_targets(stock, closes):
+    assert signals.at(stock, closes, DAY)["n_targets"] == 3

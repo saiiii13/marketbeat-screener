@@ -19,7 +19,9 @@ END = "2026-10-23"
 WINDOWS = [(s, END) for s in ("2026-01-26", "2026-02-23", "2026-03-23", "2026-04-20", "2026-05-04")]
 WINDOWS += [("2026-01-26", "2026-04-24"), ("2026-04-24", "2026-07-24"), ("2026-07-24", "2026-10-23")]
 SETUPS = (10, 20)
-OVERLAYS = ("none", "rating_up", "upgrade_flow", "target_raises", "target_upside", "agreement")
+# The action-based overlays (upgrade_flow, target_raises, target_upside, agreement) cannot be
+# backtested before the screener has recorded actions as they happen (replay.overlay_available).
+OVERLAYS = ("none", "rating_up")
 CHECK_WINDOWS = [("2026-01-26", END), ("2026-03-23", END)]
 OFFICIAL_STARTS = ("2026-01-26", "2026-02-23", "2026-03-23", "2026-04-20")
 
@@ -75,7 +77,7 @@ def specs() -> list[dict]:
     out = [{"part": "grid", "start": s, "end": e, "picks": p, "overlay": o}
            for s, e in WINDOWS for p in SETUPS for o in OVERLAYS]
     out += [{"part": "grid", "start": s, "end": e, "picks": p, "overlay": "none", "rule": "list",
-             "invest_all": True} for s, e in WINDOWS for p in SETUPS]
+             "invest_all": inv} for s, e in WINDOWS for p in SETUPS for inv in (False, True)]
     out += [{"part": "concentration", "start": s, "end": e, "picks": p, "overlay": o, "drop_top2": True}
             for s, e in CHECK_WINDOWS for p in SETUPS for o in OVERLAYS]
     out += [{"part": "official", "start": s, "end": END, "picks": p, "overlay": o, "official": True}
@@ -85,10 +87,10 @@ def specs() -> list[dict]:
 
 def verdict(rows: list[dict]) -> dict:
     """The five-part adoption bar for each overlay against 'none'."""
-    def runs(part, overlay, rule="net"):
+    def runs(part, overlay, rule="net", invest_all=False):
         return {(r["start"], r["end"], r["picks"]): r for r in rows
                 if r["part"] == part and r["overlay"] == overlay and r.get("rule", "net") == rule
-                and r["ret"] is not None}
+                and r.get("invest_all", False) == invest_all and r["ret"] is not None}
 
     base, out = runs("grid", "none"), {}
     for o in OVERLAYS[1:]:

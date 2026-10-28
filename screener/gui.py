@@ -1382,8 +1382,8 @@ BT_HOLDS = [5, 10, 21, 42, 63]
 TREND_NAMES = {"none": "no price rule", "up1m": "skip 1-mo losers", "up3m": "skip 3-mo losers",
                "blend3m": "70/30 blend"}
 # The backtest's "which stocks count" row: card name -> (mb_ratio.RULES key, fully invested).
-BT_RULES = {"net buys": ("net", False), "my list": ("list", True), "no sells": ("net0", False),
-            "old ratio": ("ratio", False)}
+BT_RULES = {"net buys": ("net", False), "my list": ("list", False), "my list, all in": ("list", True),
+            "no sells": ("net0", False), "old ratio": ("ratio", False)}
 BT_RULE_NAMES = list(BT_RULES)
 OVERLAY_NAMES = {"none": "none", "rating_up": "rating up", "upgrade_flow": "upgrades",
                  "target_raises": "target raises", "target_upside": "upside", "agreement": "agreement"}

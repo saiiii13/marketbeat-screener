@@ -4,7 +4,7 @@ from screener import replay
 
 
 def sig(**kw):
-    base = {"net_change_91d": None, "upgrades_60d": 0, "downgrades_60d": 0, "target_raises_30d": 0,
+    base = {"n_targets": 0, "net_change_91d": None, "upgrades_60d": 0, "downgrades_60d": 0, "target_raises_30d": 0,
             "target_cuts_30d": 0, "upside": None, "dispersion": None}
     return {**base, **kw}
 
@@ -30,7 +30,8 @@ def test_flow_and_revision_filters():
 
 
 def test_agreement_filter():
-    sigs = {"AAA": sig(dispersion=0.8), "BBB": sig(dispersion=0.3), "CCC": sig()}
+    sigs = {"AAA": sig(dispersion=0.8, n_targets=5), "BBB": sig(dispersion=0.3, n_targets=5),
+            "CCC": sig(dispersion=0.0, n_targets=1)}
     assert [t for _, _, t, _ in replay.apply_overlay("agreement", SCORED, sigs)] == ["BBB"]
 
 
@@ -47,3 +48,15 @@ def test_old_saved_params_describe():
     assert replay.describe({"trend": "none"}) == "net buys only"
     assert "fewer than" not in replay.describe({"trend": "up3m", "overlay": "rating_up", "rule": "net"})
     assert "analysts turning positive" in replay.describe({"overlay": "rating_up", "rule": "net"})
+
+
+def test_action_overlays_need_recorded_history():
+    assert replay.overlay_available("none", "2026-01-26", "2026-10-25")
+    assert replay.overlay_available("rating_up", "2026-01-26", "2026-10-25")
+    for o in ("upgrade_flow", "target_raises", "target_upside", "agreement"):
+        assert not replay.overlay_available(o, "2026-01-26", "2026-10-25")
+        assert replay.overlay_available(o, "2027-01-05", "2026-10-25")
+
+
+def test_invest_all_says_trades_are_per_period():
+    assert "trades counted per period" in replay.describe({"rule": "list", "invest_all": True})

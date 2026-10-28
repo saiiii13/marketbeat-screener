@@ -23,11 +23,12 @@ Two limits are reported with every result rather than hidden:
     ~10 at a year, against MarketBeat's own published counts).
 Survivorship bias also applies: the stocks are ones MarketBeat lists today.
 
-Two data guards, both reported in the notes. A stock whose stored closes move threefold (up
-or down) in a single day is left out: in MarketBeat's chart that is almost always a split
-the series was never adjusted for - ELOX shows a thousandfold "gain" on a 1-for-1000 reverse
-split - and one such stock in an equal-weight basket of 2,000 adds fifty points to it. And
-nothing under $1 is bought, by the strategy or by buy-and-hold.
+Two data guards, both reported in the notes. MarketBeat's chart has splits it never
+adjusted for - ELOX shows a thousandfold "gain" on a 1-for-1000 reverse split, and one such
+stock in an equal-weight basket of 2,000 adds fifty points to it - and one-day bad prices
+that the next close undoes. adjust_splits scales the closes before a split by its factor and
+puts a bad print back to the day before; real crashes stay. And nothing under $1 is bought,
+by the strategy or by buy-and-hold.
 """
 import json
 import math
@@ -42,7 +43,6 @@ from .score import one_per_company
 HINDSIGHT = ("These stocks were chosen from today's recommendations - the stocks MarketBeat's "
              "analysts rate best now. The past cannot have known that, so the result flatters the "
              "strategy; test 'every stored stock' for a fair comparison.")
-SPLIT_JUMP = 3.0          # a one-day move this many times up or down marks a broken series
 MIN_TRADE_PRICE = 1.0
 DEFAULT_CASH = 10_000.0
 DEFAULT_PICKS = 10
@@ -70,12 +70,13 @@ OVERLAYS = {
     "rating_up": ("analysts turning positive (net buys up over 3 months)", "filter",
                   lambda s: (s["net_change_91d"] or 0) > 0),
     "upgrade_flow": ("more upgrades than downgrades in 60 days", "filter",
-                     lambda s: s["upgrades_60d"] > s["downgrades_60d"]),
+                     lambda s: s["upgrades_60d"] is not None and s["upgrades_60d"] > s["downgrades_60d"]),
     "target_raises": ("more price-target raises than cuts in 30 days", "filter",
-                      lambda s: s["target_raises_30d"] > s["target_cuts_30d"]),
+                      lambda s: s["target_raises_30d"] is not None
+                      and s["target_raises_30d"] > s["target_cuts_30d"]),
     "target_upside": ("70% rule, 30% upside to the analysts' targets", "blend", lambda s: s["upside"]),
-    "agreement": ("analysts agree (targets within half the average apart)", "filter",
-                  lambda s: s["dispersion"] is not None and s["dispersion"] <= 0.5),
+    "agreement": ("analysts agree (3+ targets, within half the average apart)", "filter",
+                  lambda s: s["n_targets"] >= 3 and s["dispersion"] <= 0.5),
 }
 DEFAULT_OVERLAY = "none"
 
@@ -95,29 +96,77 @@ def apply_overlay(name: str, scored: list[tuple], sigs: dict[str, dict]) -> list
     return [(0.7 * float(rule_pct[t]) + 0.3 * float(sig_pct[t]), h, t, e) for _, h, t, e in rows]
 
 
-SPLIT_FACTORS = (3, 4, 5, 8, 10, 15, 20, 25, 30, 40, 50, 100, 1000)
+SPLIT_TRIGGER = 2.85       # one-day moves this many times up or down are checked
+SPLIT_FACTORS = (3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 35, 40, 50, 60, 75, 80, 100, 150, 200, 250,
+                 300, 400, 500, 1000)
+TICK_RETURN = 1.5          # a bad print the next close returns to within this factor of
 
 
-def split_like(closes: pd.Series) -> bool:
-    """Whether the closes show a split MarketBeat never adjusted for: a one-day move of
-    SPLIT_JUMP or more that is within 5% of a whole split factor (up or down) and where the
-    new level holds for the next five closes. A real crash or spike that is not a clean
-    factor, or that reverses, is a real move and stays in the backtest. The closes before the
-    jump must be steady too, so the fall back from a one-day spike is not read as a split."""
-    c = closes.dropna().reset_index(drop=True)
-    jumps = c / c.shift(1)
-    for i in jumps.index[1:]:
-        x = float(jumps[i])
-        if 1 / SPLIT_JUMP < x < SPLIT_JUMP:
+def adjust_splits(closes: pd.Series) -> tuple[pd.Series, int, int]:
+    """MarketBeat's chart with its two kinds of broken close fixed: (closes, splits, ticks).
+
+    A one-day bad print (the next close is back within TICK_RETURN of the day before) is
+    replaced by the day before's close. A split MarketBeat never adjusted for - a move of at
+    least SPLIT_TRIGGER within 5% (10% above a factor of 10) of a whole split factor, with
+    the closes before it nearer the old level and the five after it nearer the new one, in
+    log terms - is adjusted the usual way: every earlier close is scaled by the factor, so
+    the stock stays in and the split is not a gain or a loss. A real crash that is not a
+    clean factor stays as it is; one that is exactly a factor (say -66.7%) cannot be told
+    apart from a split here and is adjusted."""
+    v = closes.to_numpy(dtype=float, copy=True)
+    idx = [i for i in range(len(v)) if v[i] == v[i] and v[i] > 0]
+    ticks = splits = 0
+    for n in range(1, len(idx) - 1):
+        a, b, c = v[idx[n - 1]], v[idx[n]], v[idx[n + 1]]
+        if abs(math.log(b / a)) >= math.log(SPLIT_TRIGGER) and abs(math.log(c / a)) < math.log(TICK_RETURN):
+            v[idx[n]] = a
+            ticks += 1
+    for n in range(1, len(idx)):
+        old, new = v[idx[n - 1]], v[idx[n]]
+        x = new / old
+        f = max(x, 1 / x)
+        if f < SPLIT_TRIGGER:
             continue
-        f = x if x > 1 else 1 / x
-        k = min(SPLIT_FACTORS, key=lambda k: abs(f - k) / k)
-        after = c[i:i + 6] / c[i]
-        before = c[max(0, i - 5):i] / c[i - 1]
-        if (abs(f - k) / k <= 0.05 and len(after) >= 2 and after.between(0.75, 1.33).all()
-                and before.between(0.75, 1.33).all()):
-            return True
-    return False
+        k = min(SPLIT_FACTORS, key=lambda k: abs(math.log(f / k)))
+        if abs(math.log(f / k)) > (0.05 if k <= 10 else 0.10):
+            continue
+        after = [v[j] for j in idx[n + 1:n + 6]]
+        before = [v[j] for j in idx[max(0, n - 5):n - 1]]
+        nearer_new = all(abs(math.log(p / new)) < abs(math.log(p / old)) for p in after)
+        nearer_old = all(abs(math.log(p / old)) < abs(math.log(p / new)) for p in before)
+        if after and nearer_new and nearer_old:
+            scale = k if x > 1 else 1 / k
+            for j in idx[:n]:
+                v[j] *= scale
+            splits += 1
+    return pd.Series(v, index=closes.index), splits, ticks
+
+
+def _repair(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """adjust_splits on every column; the tickers that had a split, and a bad print."""
+    split_stocks, tick_stocks, cols = [], [], {}
+    for t in frame.columns:
+        cols[t], s, k = adjust_splits(frame[t])
+        if s:
+            split_stocks.append(t)
+        if k:
+            tick_stocks.append(t)
+    return pd.DataFrame(cols, index=frame.index), split_stocks, tick_stocks
+
+
+# Overlays that count analyst actions, and how many days of recorded actions each needs
+# before its first rebalance (see signals.py: MarketBeat keeps only each firm's latest
+# action, so a backtest can only use actions the screener recorded at the time).
+ACTION_OVERLAYS = {"upgrade_flow": 60, "target_raises": 30, "target_upside": 0, "agreement": 0}
+
+
+def overlay_available(overlay: str, start: str, recorded_from: str | None) -> bool:
+    if overlay not in ACTION_OVERLAYS:
+        return True
+    if not recorded_from:
+        return False
+    ready = date.fromisoformat(recorded_from).toordinal() + ACTION_OVERLAYS[overlay]
+    return date.fromisoformat(start).toordinal() >= ready
 
 
 def order(scored: list[tuple]) -> list[tuple]:
@@ -194,6 +243,15 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
         invest_all: bool = False, overlay: str = DEFAULT_OVERLAY) -> dict:
     notes: list[str] = []
     rank_by = RULES[rule][0]
+    with db.connect() as con:
+        recorded_from = con.execute("SELECT MIN(first_seen) FROM rating_actions").fetchone()[0]
+    if not overlay_available(overlay, start, recorded_from):
+        need = ACTION_OVERLAYS.get(overlay, 0)
+        return {"error": f"'{OVERLAYS[overlay][0]}' counts analyst actions, and MarketBeat shows only "
+                         f"each firm's latest one, so a backtest can use only actions the screener "
+                         f"recorded at the time. They are recorded from {recorded_from or 'the first run'}"
+                         + (f"; this rule needs {need} days of them" if need else "")
+                         + " - start the backtest after that."}
     trend_days = TRENDS[trend][1]
     if from_recommendations:
         notes.append(HINDSIGHT)
@@ -222,12 +280,13 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
     counts = frame.notna().sum(axis=1)
     days = [d for d in frame.index if counts[d] >= max(1, 0.5 * frame.shape[1])]
     frame = frame.loc[days].ffill()
-    broken = [t for t in frame.columns if split_like(frame[t])]
-    if broken:
-        frame = frame.drop(columns=broken)
-        notes.append(f"{len(broken)} stock(s) left out for an unadjusted split in MarketBeat's chart (a "
-                     f"one-day jump of a whole split factor that holds afterwards); real crashes stay in"
-                     + (f": {', '.join(broken)}" if len(broken) <= 12 else "."))
+    frame, split_stocks, tick_stocks = _repair(frame)
+    if split_stocks or tick_stocks:
+        notes.append(f"MarketBeat's chart repaired: {len(split_stocks)} unadjusted split(s) adjusted "
+                     f"(earlier closes scaled by the split factor), {len(tick_stocks)} stock(s) with a "
+                     f"one-day bad price set back to the day before; real crashes stay in"
+                     + (f" ({', '.join(split_stocks + tick_stocks)})"
+                        if len(split_stocks) + len(tick_stocks) <= 12 else "."))
     if frame.empty:
         return {"error": "Every chosen stock was left out for broken price history."}
     if len(days) < hold_days + 2:
@@ -240,7 +299,7 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
     full = None
     if trend_days:
         # The trend looks back before the replay's first day, so it reads from the oldest close.
-        full = _price_frame(list(frame.columns), first, end).ffill()
+        full, _, _ = _repair(_price_frame(list(frame.columns), first, end).ffill())
         full.index = pd.to_datetime(full.index)
         if pd.Timestamp(days[0]) - pd.Timedelta(days=trend_days) < full.index[0]:
             notes.append(f"The {trend_days}-day price trend needs history from before {first}, so "
@@ -432,7 +491,9 @@ def describe(params: dict) -> str:
     if params.get("overlay", "none") != "none":
         parts.append(OVERLAYS[params["overlay"]][0])
     if params.get("invest_all"):
-        parts.append("fully invested")
+        # Fully invested sells and rebuys everything at each re-check, so every holding
+        # period is its own trade.
+        parts.append("fully invested (trades counted per period)")
     return ", ".join(parts)
 
 
