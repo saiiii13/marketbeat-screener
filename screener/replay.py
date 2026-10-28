@@ -35,7 +35,7 @@ from datetime import date
 
 import pandas as pd
 
-from . import db, ratings
+from . import db, ratings, signals
 from .mb_ratio import MIN_ANALYSTS, RULES, sort_key
 from .score import one_per_company
 
@@ -59,6 +59,40 @@ TRENDS = {
     "blend3m": ("70% net-buys percentile, 30% 3-month price change percentile", 91),
 }
 DEFAULT_TREND = "none"
+
+
+# Optional MarketBeat signal rules on top of the ranking rule, each read with signals.at on
+# the rebalance day (history up to that day only). A filter keeps a stock only when it holds;
+# a blend ranks by 70% rule-score percentile and 30% signal percentile, skipping stocks
+# without the signal.
+OVERLAYS = {
+    "none": ("no extra rule", None, None),
+    "rating_up": ("analysts turning positive (net buys up over 3 months)", "filter",
+                  lambda s: (s["net_change_91d"] or 0) > 0),
+    "upgrade_flow": ("more upgrades than downgrades in 60 days", "filter",
+                     lambda s: s["upgrades_60d"] > s["downgrades_60d"]),
+    "target_raises": ("more price-target raises than cuts in 30 days", "filter",
+                      lambda s: s["target_raises_30d"] > s["target_cuts_30d"]),
+    "target_upside": ("70% rule, 30% upside to the analysts' targets", "blend", lambda s: s["upside"]),
+    "agreement": ("analysts agree (targets within half the average apart)", "filter",
+                  lambda s: s["dispersion"] is not None and s["dispersion"] <= 0.5),
+}
+DEFAULT_OVERLAY = "none"
+
+
+def apply_overlay(name: str, scored: list[tuple], sigs: dict[str, dict]) -> list[tuple]:
+    """scored rows (score, holds, ticker, exact) after the overlay; sigs maps ticker -> signals.at."""
+    _, kind, fn = OVERLAYS[name]
+    if kind is None:
+        return scored
+    if kind == "filter":
+        return [x for x in scored if x[2] in sigs and fn(sigs[x[2]])]
+    rows = [x for x in scored if x[2] in sigs and fn(sigs[x[2]]) is not None]
+    if not rows:
+        return []
+    rule_pct = pd.Series({x[2]: x[0] for x in rows}).rank(pct=True)
+    sig_pct = pd.Series({x[2]: fn(sigs[x[2]]) for x in rows}).rank(pct=True)
+    return [(0.7 * float(rule_pct[t]) + 0.3 * float(sig_pct[t]), h, t, e) for _, h, t, e in rows]
 
 
 def order(scored: list[tuple]) -> list[tuple]:
@@ -132,7 +166,7 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
         picks: int = DEFAULT_PICKS, hold_days: int = DEFAULT_HOLD_DAYS,
         min_analysts: int = MIN_ANALYSTS, label: str = "", save: bool = True, say=print,
         from_recommendations: bool = False, trend: str = "none", rule: str = "net",
-        invest_all: bool = False) -> dict:
+        invest_all: bool = False, overlay: str = DEFAULT_OVERLAY) -> dict:
     notes: list[str] = []
     rank_by = RULES[rule][0]
     trend_days = TRENDS[trend][1]
@@ -240,6 +274,9 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
                 net_pct = pd.Series({t: s for s, _, t, _ in scored}).rank(pct=True)
                 scored = [(0.7 * float(net_pct[t]) + 0.3 * float(pct[t]), h, t, e)
                           for _, h, t, e in scored]
+            if overlay != "none":
+                sigs = {t: signals.at(history[t], frame[t], day) for _, _, t, _ in scored}
+                scored = apply_overlay(overlay, scored, sigs)
             scored = order(scored)
             distinct, _ = one_per_company([t for _, _, t, _ in scored], company_of)
             chosen = distinct[:picks]
@@ -321,7 +358,7 @@ def run(start: str, end: str, tickers: list[str] | None = None, cash: float = DE
               "ticker_list": tickers,
               "ticker_count": len(frame.columns), "cash": initial_cash,
               "picks": picks, "hold_days": hold_days, "min_analysts": min_analysts,
-              "trend": trend, "rule": rule, "invest_all": invest_all}
+              "trend": trend, "rule": rule, "invest_all": invest_all, "overlay": overlay}
     result = {"params": params, "metrics": metrics, "trades": trades,
               "equity": [{"date": d, "strategy": v, "buy_hold": bh[1],
                           "benchmark": spy_curve[k][1] if spy_curve else None}
@@ -369,6 +406,8 @@ def describe(params: dict) -> str:
     (they ranked by net buys or, before #21, the buy share) and say only their trend."""
     parts = [RULES[params["rule"]][1]] if params.get("rule") in RULES else []
     parts.append(TRENDS[params.get("trend", "none")][0])
+    if params.get("overlay", "none") != "none":
+        parts.append(OVERLAYS[params["overlay"]][0])
     if params.get("invest_all"):
         parts.append("fully invested")
     return ", ".join(parts)

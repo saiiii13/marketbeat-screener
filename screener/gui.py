@@ -1371,12 +1371,14 @@ def _facts_line(ticker, f, ch=None):
 
 BT_PICKS = [3, 5, 10, 20]
 BT_HOLDS = [5, 10, 21, 42, 63]
-TREND_NAMES = {"none": "net buys only", "up1m": "skip 1-mo losers", "up3m": "skip 3-mo losers",
+TREND_NAMES = {"none": "no price rule", "up1m": "skip 1-mo losers", "up3m": "skip 3-mo losers",
                "blend3m": "70/30 blend"}
 # The backtest's "which stocks count" row: card name -> (mb_ratio.RULES key, fully invested).
 BT_RULES = {"net buys": ("net", False), "my list": ("list", True), "no sells": ("net0", False),
             "old ratio": ("ratio", False)}
 BT_RULE_NAMES = list(BT_RULES)
+OVERLAY_NAMES = {"none": "none", "rating_up": "rating up", "upgrade_flow": "upgrades",
+                 "target_raises": "target raises", "target_upside": "upside", "agreement": "agreement"}
 
 
 def backtest_start(app):
@@ -1461,12 +1463,16 @@ class BacktestParamsScene(Scene):
         self.trend = self.trends.index(replay.DEFAULT_TREND)
         self.rules = list(BT_RULE_NAMES)
         self.rule = 0
+        self.overlays = list(replay.OVERLAYS)
+        self.overlay = self.overlays.index(replay.DEFAULT_OVERLAY)
 
     def key(self, event, app):
         if event.key in (pygame.K_t, pygame.K_TAB):
             self.trend = (self.trend + 1) % len(self.trends)
         elif event.key == pygame.K_r:
             self.rule = (self.rule + 1) % len(self.rules)
+        elif event.key == pygame.K_x:
+            self.overlay = (self.overlay + 1) % len(self.overlays)
         elif event.key in (pygame.K_LEFT, pygame.K_a):
             self.picks = max(0, self.picks - 1)
         elif event.key in (pygame.K_RIGHT, pygame.K_d):
@@ -1479,6 +1485,7 @@ class BacktestParamsScene(Scene):
             app.bt["picks"], app.bt["hold"] = BT_PICKS[self.picks], BT_HOLDS[self.hold]
             app.bt["trend"] = self.trends[self.trend]
             app.bt["rule"], app.bt["invest_all"] = BT_RULES[self.rules[self.rule]]
+            app.bt["overlay"] = self.overlays[self.overlay]
             return run_backtest(app)
         elif event.key == pygame.K_ESCAPE:
             return InputScene("STARTING CASH", "how much the simulated portfolio starts with",
@@ -1501,18 +1508,20 @@ class BacktestParamsScene(Scene):
                 ("TRADING DAYS BETWEEN RE-CHECKS", BT_HOLDS, self.hold, "UP / DOWN", 86),
                 ("WHICH STOCKS COUNT", self.rules, self.rule, rule_note, 230),
                 ("PRICE-CHART RULE", names, self.trend, "T to change  ·  "
-                 + replay.TRENDS[self.trends[self.trend]][0], 230))):
-            y = 150 + row * 135
+                 + replay.TRENDS[self.trends[self.trend]][0], 230),
+                ("EXTRA MARKETBEAT RULE", [OVERLAY_NAMES[o] for o in self.overlays], self.overlay,
+                 "X to change  ·  " + replay.OVERLAYS[self.overlays[self.overlay]][0], 150))):
+            y = 128 + row * 118
             app.text(label, app.font.md, TEXT, SCREEN_W // 2, y, centre=True)
-            app.text(note, app.font.xs, DIM, SCREEN_W // 2, y + 30, centre=True)
+            app.text(note, app.font.xs, DIM, SCREEN_W // 2, y + 28, centre=True)
             total_w = len(choices) * (w + 14)
             x0 = (SCREEN_W - total_w) // 2
             for i, value in enumerate(choices):
                 x = x0 + i * (w + 14)
-                app.card(x, y + 56, w, 64, i == index)
-                font = (app.font.lg if i == index else app.font.md) if w < 100 else app.font.md
-                app.text(str(value), font, ACCENT if i == index else DIM, x + w // 2, y + 70, centre=True)
-        app.footer("ARROWS choose     R which stocks     T price-chart rule     ENTER run     ESC back")
+                app.card(x, y + 50, w, 56, i == index)
+                app.text(str(value), app.font.md, ACCENT if i == index else DIM, x + w // 2, y + 60,
+                         centre=True)
+        app.footer("ARROWS choose   R which stocks   T price-chart rule   X extra rule   ENTER run   ESC back")
 
 
 def run_backtest(app):
@@ -1523,7 +1532,7 @@ def run_backtest(app):
         return replay.run(bt["start"], bt["end"], bt["tickers"], bt["cash"], bt["picks"],
                           bt["hold"], say=say, from_recommendations=bt.get("from_recs", False),
                           trend=bt.get("trend", "none"), rule=bt.get("rule", "net"),
-                          invest_all=bt.get("invest_all", False))
+                          invest_all=bt.get("invest_all", False), overlay=bt.get("overlay", "none"))
 
     def finish(result, app):
         if result.get("error"):

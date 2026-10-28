@@ -171,7 +171,7 @@ def cmd_replay(args):
     result = replay.run(start, end, tickers, args.cash, args.picks, args.hold, label=args.label or "",
                         from_recommendations=args.tickers == "recs",
                         trend=args.trend or replay.DEFAULT_TREND, rule=args.rule,
-                        invest_all=args.invest_all)
+                        invest_all=args.invest_all, overlay=args.overlay)
     replay.show(result)
 
 
@@ -357,6 +357,9 @@ def main():
     ap.add_argument("--rule", choices=["net", "list", "net0", "ratio"], default="net",
                     help="replay: how stocks are ranked - net buys, the menu list's rule, "
                          "net buys without sells, or the old buy share (default: net)")
+    ap.add_argument("--overlay", default="none",
+                    choices=["none", "rating_up", "upgrade_flow", "target_raises", "target_upside", "agreement"],
+                    help="replay: an extra MarketBeat signal rule (default: none)")
     ap.add_argument("--invest-all", action="store_true",
                     help="replay: split all the money over whatever qualifies, however few")
     ap.add_argument("--picks-plan", type=int, default=5,
