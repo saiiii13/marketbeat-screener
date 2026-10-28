@@ -157,8 +157,8 @@ def counts_at(stock: dict, asof: str) -> tuple[int, int, int] | None:
 
     A stored snapshot within a few days before the date is used as it stands. Otherwise the
     count is rebuilt from the rating actions and then corrected by how far the rebuild was
-    off at the nearest snapshots on either side, blended by distance in time - so it lands
-    exactly on every snapshot and drifts least between them.
+    off at the latest snapshot on or before the date. Snapshots after the date are never
+    used: the backtest must only see what MarketBeat showed at the time.
     """
     snaps = stock.get("snapshots") or {}
     target = date.fromisoformat(asof)
@@ -170,22 +170,11 @@ def counts_at(stock: dict, asof: str) -> tuple[int, int, int] | None:
         return None
     rebuilt = counts_on(actions, asof)
     base = [rebuilt["buy"], rebuilt["hold"], rebuilt["sell"]]
-    errors = []
-    for d, official in snaps.items():
-        r = counts_on(actions, d)
-        errors.append((d, [official[0] - r["buy"], official[1] - r["hold"], official[2] - r["sell"]]))
-    errors.sort()
-    before = [e for e in errors if e[0] <= asof]
-    after = [e for e in errors if e[0] > asof]
-    if before and after:
-        (d0, e0), (d1, e1) = before[-1], after[0]
-        t0, t1 = date.fromisoformat(d0).toordinal(), date.fromisoformat(d1).toordinal()
-        w = (target.toordinal() - t0) / max(t1 - t0, 1)
-        err = [e0[i] * (1 - w) + e1[i] * w for i in range(3)]
-    elif before:
-        err = before[-1][1]
-    elif after:
-        err = after[0][1]
+    before = [d for d in snaps if d <= asof]
+    if before:
+        d = max(before)
+        official, r = snaps[d], counts_on(actions, d)
+        err = [official[0] - r["buy"], official[1] - r["hold"], official[2] - r["sell"]]
     else:
         err = [0, 0, 0]
     out = tuple(max(0, int(round(base[i] + err[i]))) for i in range(3))
