@@ -970,11 +970,17 @@ class RatioScene(Scene):
 
     def load_chart(self):
         """The chart's 1-week, 1-month and 1-year changes, and the overview page's facts."""
-        from . import prices
-        self.changes, self.facts = {}, {}
+        from . import prices, ratings, signals
+        self.changes, self.facts, self.signals = {}, {}, {}
         if self.result:
-            self.changes, self.facts = prices.chart_changes(
-                [r["ticker"] for r in self.result["rows"]], self.result["built"])
+            tickers = [r["ticker"] for r in self.result["rows"]]
+            self.changes, self.facts = prices.chart_changes(tickers, self.result["built"])
+            with db.connect() as con:
+                history = ratings.load(con, tickers)
+            for t in tickers:
+                if t in history:
+                    s = signals.at(history[t], prices.closes(t), self.result["built"])
+                    self.signals[t] = signals.describe(s)
 
     def refresh(self):
         import threading
@@ -1049,7 +1055,7 @@ class RatioScene(Scene):
                  f"lists  ·  {len(res['rows']):,} with more than 35 buys, under 5 holds, no sells  ·  "
                  f"ranked by net buys = buys - 2 x holds", app.font.sm, DIM, 40, 82)
         cols = [(50, "#"), (100, "TICKER"), (200, "BUY"), (255, "HOLD"), (315, "SELL"),
-                (375, "RATIO"), (540, "NET"), (600, "BUY %")]
+                (375, "RATIO"), (538, "NET"), (582, "BUY %")]
         for x, label in cols:
             app.text(label, app.font.xs, DIM, x, 118)
         for x, label in ((690, "1 WEEK"), (775, "1 MONTH"), (860, "1 YEAR"), (980, "PRICE"),
@@ -1076,8 +1082,8 @@ class RatioScene(Scene):
                     pygame.draw.rect(app.screen, colour, (x, y + 4, seg, 14))
                 x += seg
             app.text(str(mb_ratio.net_buys(r["buy"], r["hold"], r["sell"])), app.font.mono_b,
-                     GREEN, 540, y)
-            app.text(f"{r['buy_share']:.0%}", app.font.mono, TEXT, 600, y)
+                     GREEN, 538, y)
+            app.text(f"{r['buy_share']:.0%}", app.font.mono, TEXT, 582, y)
             ch = self.changes.get(r["ticker"]) or {}
             for x, key in ((690, "1w"), (775, "1m"), (860, "1y")):
                 _change(app, ch.get(key), x, y)
@@ -1092,6 +1098,8 @@ class RatioScene(Scene):
             line = _facts_line(r["ticker"], self.facts.get(r["ticker"]))
             for k, part in enumerate(_wrap(app.font.sm, line, SCREEN_W - 80)[:2]):
                 app.text(part, app.font.sm, TEXT if k == 0 else DIM, 40, 648 + k * 22)
+            if r["ticker"] in self.signals:
+                app.text(self.signals[r["ticker"]], app.font.xs, ACCENT, 40, 694)
         app.footer("UP/DOWN select   O or ENTER open on MarketBeat   R read MarketBeat again   "
                    "ESC back")
 

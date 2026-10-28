@@ -25,6 +25,17 @@ TARGET_DAYS = 365
 MOMENTUM_DAYS = 91
 
 
+def describe(s: dict) -> str:
+    """One line for the menu: the signals a person can read at a glance."""
+    trend = s["net_change_91d"]
+    parts = [f"rating trend 3 mo {trend:+d}" if trend is not None else "rating trend 3 mo -",
+             f"upgrades/downgrades 60 days {s['upgrades_60d']}/{s['downgrades_60d']}",
+             f"target raises/cuts 30 days {s['target_raises_30d']}/{s['target_cuts_30d']}"]
+    if s["target_low"] is not None:
+        parts.append(f"analysts' targets ${s['target_low']:,.0f}–${s['target_high']:,.0f}")
+    return "  ·  ".join(parts)
+
+
 def _days_before(day: str, n: int) -> str:
     return (date.fromisoformat(day) - timedelta(days=n)).isoformat()
 

@@ -73,3 +73,15 @@ def test_empty_stock():
     assert s["counts"] is None and s["net"] is None and s["net_change_91d"] is None
     assert s["upgrades_60d"] == 0 and s["target_raises_30d"] == 0
     assert s["target_mean"] is None and s["upside"] is None and s["dispersion"] is None
+
+
+def test_describe_line(stock, closes):
+    line = signals.describe(signals.at(stock, closes, DAY))
+    assert "upgrades/downgrades 60 days 1/0" in line
+    assert "target raises/cuts 30 days 1/1" in line
+    assert "analysts' targets $80–$150" in line
+
+
+def test_describe_empty():
+    assert signals.describe(signals.at({"snapshots": {}, "actions": []}, None, DAY)) == \
+        "rating trend 3 mo -  ·  upgrades/downgrades 60 days 0/0  ·  target raises/cuts 30 days 0/0"
