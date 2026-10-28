@@ -1,10 +1,13 @@
 # How the screener works
 
-Every figure comes from Yahoo Finance. A run wipes the database first, so nothing is
-carried over from the last one.
+Every figure comes from MarketBeat, read through the logged-in Chrome profile's cookies. Every
+run writes to `data/screener.db`: the working tables hold today's run, and the history tables
+(prices, ratings, runs, recommendations, backtests, holdings, plans) are only ever added to,
+so each run builds on the last.
 
 ```
-python run.py all                            ~2 minutes
+python run.py mb                     ~15-20 min; every run reads MarketBeat from scratch
+python run.py menu                   the same, and everything else, from the keyboard
 ```
 
 ---
@@ -13,234 +16,174 @@ python run.py all                            ~2 minutes
 
 ```
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  0. WIPE            data/screener.db deleted — the run starts blank   │
+  │  0. TIDY            working rows are all dropped, today's included,   │
+  │                     so every run reads every stock and price again.   │
+  │                     History tables are never touched.                 │
   └───────────────────────────────┬──────────────────────────────────────┘
                                   ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  1. SWEEP           Yahoo screener, POST /v1/finance/screener         │
-  │                     one query per exchange, 250 rows a page           │
+  │  1. LISTS           ~70 of MarketBeat's research lists: upgrades,     │
+  │                     top rated, MarketRank, breakouts, golden crosses, │
+  │                     unusual volume, insider buying, every sector...   │
+  │                     plus your holdings and the last recommendations   │
   │                     ─────────────────────────────────────────────     │
-  │                     22,709 US stocks   (216,813 with --world)         │
+  │                     2,041 from the lists + 326 carried over           │
   └───────────────────────────────┬──────────────────────────────────────┘
                                   ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  2. DISCOVER        8 curated Yahoo screens decide what is worth      │
-  │                     a look: day gainers, most actives, small-cap      │
-  │                     gainers, aggressive small caps, growth tech,      │
-  │                     undervalued growth, undervalued large caps,       │
-  │                     heavily shorted.  Day losers subtract.            │
-  │                     Ranked by how many screens agree, not by size.    │
-  │                     ─────────────────────────────────────────────     │
-  │                     1,042 candidates   (217 on two or more screens)   │
+  │  2. PAGES           per stock, 4 at a time:                           │
+  │                       overview  company, sector, price, volume,       │
+  │                                 market cap, MarketRank, sentiment     │
+  │                       chart     a year of daily closes - fetched only │
+  │                                 when the stored history is behind     │
+  │                       forecast  buy/hold/sell count, target, upside,  │
+  │                                 MarketBeat's own counts 1 month,      │
+  │                                 3 months and 1 year ago, and every    │
+  │                                 analyst action it lists               │
   └───────────────────────────────┬──────────────────────────────────────┘
                                   ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  3. PRICE           GET /v8/finance/chart/{symbol}?range=1y           │
-  │                     a year of daily OHLCV, 8 at a time                │
-  │                     → 1-month return, RSI, volatility, dollar volume  │
-  │                     ─────────────────────────────────────────────     │
-  │                     1,036 priced                                      │
+  │  3. STORE           price_history     one row per stock per day       │
+  │                     rating_snapshots  today's count + the 3 official  │
+  │                     rating_actions    every upgrade, downgrade,       │
+  │                                       initiation and target change    │
   └───────────────────────────────┬──────────────────────────────────────┘
                                   ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  4. ANALYST DATA    GET /v10/finance/quoteSummary/{symbol}            │
-  │                     11 modules, 6 at a time                           │
-  │                     → buy/hold/sell counts, targets, upgrades,        │
-  │                       ownership, short interest, fundamentals         │
+  │  4. PRICE MEASURES  1-month return, RSI, trend, volatility, 52-week   │
+  │                     position - from the stored closes                 │
   └───────────────────────────────┬──────────────────────────────────────┘
                                   ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  5. CALIBRATE       walk 300 stocks' history, record what happened    │
-  │                     next for each (momentum, RSI, trend) setup        │
-  │                     ─────────────────────────────────────────────     │
-  │                     16 setups from 5,333 observations                 │
-  │                     baseline: 49.6% of stocks rose over a month       │
+  │  5. CALIBRATE       measured odds per momentum/RSI/trend setup,       │
+  │                     from the stored closes                            │
   └───────────────────────────────┬──────────────────────────────────────┘
                                   ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  6. FILTER          ≥20 buys · ≤3 holds · 0 sells · ≥3 analysts       │
-  │                     ≥$1M daily volume · ≤60% volatility              │
-  │                     within 25% of the 52-week high                    │
-  │                     ─────────────────────────────────────────────     │
-  │                     12 survive                                        │
+  │  6. RANK            the ratio list: buy share's lower 95% bound,      │
+  │                     sells counted twice, 5+ analysts                  │
+  │                     -> saved as this run's recommendations            │
+  │                     the dashboard: filters + weighted score           │
+  │                     -> out/dashboard_<date>.html                      │
   └───────────────────────────────┬──────────────────────────────────────┘
                                   ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  7. SCORE           20% fresh upgrade · 15% buy ratio · 20% momentum  │
-  │                     10% target upside · 20% fundamentals · 15% risk   │
-  │                     plus reasons to buy, risks, and the outlook       │
-  └───────────────────────────────┬──────────────────────────────────────┘
-                                  ▼
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │  8. OUTPUT          out/dashboard_<date>.html                         │
-  │                     python run.py menu     graphical browser          │
-  │                     python run.py explore  terminal browser           │
+  │  7. SECOND OPINION  (verify) the top picks re-read live in Chrome,    │
+  │                     and Nasdaq's public consensus asked the same      │
+  │                     questions - CONFIRMED / MIXED / REJECTED          │
   └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Stages 1–7 also run from inside the menu: press **R** on the title screen.
+Stages 0–6 run from the menu with **R**. Every command that writes the working tables takes a
+lock first (`data/run.lock`); a second writer is refused with the name and PID of the one
+already running, and a lock left by a crashed process is taken over.
 
-## Each stage on its own
+## Built on top
 
-| Command | Does |
-|---|---|
-| `python run.py pull-bulk` | stage 1, add `--world` for all 44 regions |
-| `python run.py discover` | stage 2 |
-| `python run.py enrich` | stage 3 |
-| `python run.py pull-detail` | stage 4 |
-| `python run.py calibrate` | stage 5 |
-| `python run.py analyze` | stages 6–8 |
-| `python run.py menu` | graphical browser |
-| `python run.py explore` | terminal browser |
-| `python run.py simulate` | how restrictive each filter threshold is |
+| Menu | Command | What it uses |
+|---|---|---|
+| **B** Backtest | `run.py replay` | `price_history`, `rating_snapshots`, `rating_actions`; writes `backtests`, `backtest_trades`, `backtest_equity` |
+| **P** Portfolio planner | `run.py plan` | today's reading (live if not read today), `price_history`, `recommendations`, `holdings`; writes `plans`, `holdings` |
+| H on a backtest | `run.py backtests` | every saved backtest, newest first |
 
 ---
 
-# The three Yahoo endpoints
+# The three MarketBeat pages
 
-No key is needed. Two of the three require a crumb: Yahoo sets a cookie on `fc.yahoo.com`,
-then issues a token tied to it.
+All three are ordinary pages, fetched over HTTP with the Chrome profile's cookies
+(`pull_detail.make_session(browser_cookies())`). A free account sees everything used here.
+
+## 1. Overview — `/stocks/{EXCHANGE}/{TICKER}/`
 
 ```python
-import requests
-
-session = requests.Session()
-session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                      "Chrome/128.0.0.0 Safari/537.36"})
-session.get("https://fc.yahoo.com", timeout=20)
-
-# The crumb endpoint serves text/plain and answers 406 to an Accept: application/json
-# header, so ask for anything.
-crumb = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb",
-                    headers={"Accept": "*/*"}, timeout=20).text.strip()
+from screener.parse import parse_overview
+d = parse_overview(html)
+d["company"], d["sector"], d["price"], d["avg_volume"], d["market_cap"]
+# ('Visa', 'Finance', 408.02, 5950000.0, 728080000000.0)
 ```
 
-Implemented in `screener/yahoo.py`, `Yahoo._authorise`.
+The page also carries the link to its price chart, with a token minted for that page view —
+so the chart can only be fetched after the overview.
 
----
+## 2. Chart — `/Scripts/charts/PriceSeries.ashx?prefix=…&symbol=…&scrp=<token>`
 
-## 1. Screener — which stocks exist
+A JavaScript file wrapping a CSV: `Date, SharePrice, Session, InsightPoint, InsightHTML,
+OneMinuteVolume`. The `EOD` rows are a year of daily closes; the rest are intraday points.
 
-`POST https://query2.finance.yahoo.com/v1/finance/screener`
+**The traps.** EOD rows include weekends and market holidays, each repeating the previous
+close — `prices.clean()` keeps real sessions only. There are no opens, highs, lows or daily
+volume, so ATR/ADX/OBV are skipped (not faked) and liquidity uses the overview page's
+average volume. And a split makes MarketBeat restate the whole year it serves, so
+`prices.store()` rescales any older stored days by the same factor.
 
-Used in stage 1 to list the market, and in stage 2 via the `predefined/saved` variant for
-the curated screens.
+## 3. Forecast — `/stocks/{EXCHANGE}/{TICKER}/forecast/`
 
 ```python
-body = {
-    "size": 250, "offset": 0,
-    "sortField": "dayvolume", "sortType": "desc",
-    "quoteType": "equity",
-    "query": {"operator": "and", "operands": [
-        {"operator": "eq", "operands": ["exchange", "NMS"]},        # Nasdaq Global Select
-        {"operator": "gt", "operands": ["dayvolume", 50000]},
-    ]},
-    "userId": "", "userIdType": "guid",
-}
-response = session.post("https://query2.finance.yahoo.com/v1/finance/screener",
-                        params={"crumb": crumb}, json=body, timeout=30)
-result = response.json()["finance"]["result"][0]
-print(result["total"])                       # 1249  — matches, not returned
-for quote in result["quotes"][:3]:
-    print(quote["symbol"], quote["regularMarketPrice"], quote["marketCap"])
+from screener.parse import parse_forecast
+f = parse_forecast(html)
+f["rating_counts"]          # {'strong_buy': 1, 'buy': 25, 'hold': 15, 'sell': 2}
+f["official_snapshots"]     # the "Ratings Over Time" table: now, 1 month, 3 months, 1 year ago
+f["ratings_history"]        # every action listed: date, firm, action, rating from -> to, target
 ```
 
-```
-1249
-NVDA 227.21 5486440087552
-INTC 115.93 612818157568
-GRAB 3.12 12764861440
-```
-
-**The trap.** `total` reports every match, but pagination stops serving rows at about
-10,000 — silently. Asking for all US equities in one query returns 10,000 of 20,207 and
-looks complete. `screener/yahoo.py` therefore queries one exchange at a time, and
-`world()` slices each region by price band, splitting any band still over the ceiling by
-volume.
-
-Curated screens use the same endpoint under `/predefined/saved?scrIds=day_gainers`.
-Working screen ids: `day_gainers`, `day_losers`, `most_actives`, `small_cap_gainers`,
-`aggressive_small_caps`, `growth_technology_stocks`, `undervalued_growth_stocks`,
-`undervalued_large_caps`, `most_shorted_stocks`.
+**The trap.** Each column of "Ratings Over Time" is labelled with a twelve-month window,
+e.g. `9/25/25 to 9/25/26`; the snapshot date is the *end* of the window. Reading the start
+put every snapshot a year early.
 
 ---
 
-## 2. quoteSummary — analyst consensus and fundamentals
+# Past ratings: what the backtest sees
 
-`GET https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}`
+MarketBeat's free pages publish four dated counts per stock. Every other date is rebuilt by
+`ratings.counts_at()`:
 
-Stage 4. This is what the buy/hold/sell filter runs on.
+1. **A stored snapshot** within three days before the date is used as it stands. Every
+   daily run adds one per stock, so recent history becomes exact.
+2. Otherwise each firm's latest rating on or before the date, if under twelve months old.
+3. The action table holds only the most recent ~50 actions, so for older dates a firm's
+   rating is read **backwards** from its next action: an upgrade or downgrade names the old
+   rating, a target change or reiteration keeps it, an initiation means there was none.
+4. The rebuild is then **anchored** to the official snapshots: its error at the snapshots
+   either side of the date is interpolated and removed.
 
-```python
-modules = ("financialData,recommendationTrend,upgradeDowngradeHistory,"
-           "defaultKeyStatistics,earningsTrend,institutionOwnership,"
-           "insiderTransactions,majorHoldersBreakdown,summaryDetail,price,calendarEvents")
-response = session.get("https://query2.finance.yahoo.com/v10/finance/quoteSummary/ET",
-                       params={"modules": modules, "crumb": crumb}, timeout=30)
-data = response.json()["quoteSummary"]["result"][0]
+Against MarketBeat's own published counts (random stocks from the list: 40 for the first
+column, 80 for the others), share of rebuilt buy shares within 5 points:
 
-trend = data["recommendationTrend"]["trend"][0]      # [0] is now, [1] a month ago
-financial = data["financialData"]
-print(trend["strongBuy"], trend["buy"], trend["hold"], trend["sell"])
-print(financial["recommendationKey"],
-      financial["numberOfAnalystOpinions"]["raw"],
-      financial["targetMeanPrice"]["raw"])
-```
+| As of | Steps 2 only | + step 3 | + step 4 (that snapshot hidden) |
+|---|---|---|---|
+| 1 month ago | 50% | 74% | 83% |
+| 3 months ago | 38% | 58% | 71% |
+| 1 year ago | 11% | 42% | — |
 
-```
-5 15 3 0
-strong_buy 23 24.7
-```
-
-That is Energy Transfer as the pipeline sees it: 20 buys, 3 holds, no sells — which is why
-it clears the ≥20 buy / 0 sell rule.
-
-**Two traps.** Numbers arrive wrapped as `{"raw": 24.7, "fmt": "24.70"}`, so a bare
-`financial["targetMeanPrice"]` is a dict, not a number — `screener/yahoo.py` has `raw()`
-for this. And `financialData.financialCurrency` is the *reporting* currency, which often
-differs from the trading currency: TSM trades in USD and reports in TWD, so its free cash
-flow of 730,826,014,720 is New Taiwan dollars, about US$23B rather than US$730B.
+Step 4 removes the bias the rebuild has at the snapshot dates on either side. It never
+supplies a rating that had not been issued by the date.
 
 ---
 
-## 3. Chart — price history
-
-`GET https://query1.finance.yahoo.com/v8/finance/chart/{symbol}`
-
-Stage 3, and again whenever the menu draws a chart. No crumb required.
-
-```python
-response = session.get("https://query1.finance.yahoo.com/v8/finance/chart/NVDA",
-                       params={"range": "1y", "interval": "1d"}, timeout=30)
-result = response.json()["chart"]["result"][0]
-
-quote = result["indicators"]["quote"][0]
-closes = result["indicators"]["adjclose"][0]["adjclose"]   # split-adjusted
-print(len(result["timestamp"]), "sessions")
-print("last close", closes[-1])
-print("high/low   ", quote["high"][-1], quote["low"][-1])
-```
+## Logging in
 
 ```
-251 sessions
-last close 227.21
-high/low    232.82 227.02
+set MARKETBEAT_EMAIL=you@example.com
+set MARKETBEAT_PASSWORD=...
+python run.py login
 ```
 
-**The trap.** Prefer `adjclose` over `quote["close"]`: the raw series is not
-split-adjusted, and a split shows up as a fake ±50% move that wrecks every indicator.
-`high` and `low` matter too — ATR and ADX need real intraday ranges, and substituting
-closes understates a stock's true daily swing by roughly a third.
+With both variables set, `login` fills MarketBeat's form itself, headless; without them it
+opens Chrome for a login by hand — and keeps the window open if the saved session is not an
+All-Access one, so another account can be signed in. The password is used once and never
+written to disk; what persists is the session cookie in `browser_profile/`.
 
----
+## Nasdaq, in the second opinion only
+
+`verify` also asks `api.nasdaq.com` (the backend of nasdaq.com's stock pages, keyless) for its
+consensus, short interest, institutional positions, insider counts and earnings surprises,
+so each figure the screener acted on gets an independent vote. Nasdaq never chooses a stock
+and none of its figures enter the ranking, the backtest or the planner.
 
 ## Rate limits
 
-No published limit, but sustained use gets 429s. `screener/yahoo.py` pauses 0.12s between
-calls, retries 429 with a growing wait, and re-authorises once on a 401, since crumbs
-expire. Eight concurrent chart requests and six concurrent quoteSummary requests have run
-clean; well above that starts drawing refusals.
+MarketBeat publishes none. Four concurrent workers with a 0.3s pause each, and a retry with
+a growing wait on 429/503, have read 2,000+ stocks a run without refusals.
 
 ---
 

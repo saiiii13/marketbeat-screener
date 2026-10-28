@@ -14,6 +14,7 @@ import pandas as pd
 from .config import (
     BULLISH_RATINGS, MIN_ANALYSTS, MAX_VOL_ANNUAL, MIN_DOLLAR_VOL, MAX_DRAWDOWN_FROM_52W, WEIGHTS,
     MIN_BUY_RATINGS, MAX_HOLD_RATINGS, MAX_SELL_RATINGS, FOCUS_MIN_PRICE, FOCUS_PRICE_WEIGHT,
+    CONSENSUS_RULE, MIN_BUY_SHARE, MAX_PER_SECTOR, OUTLOOK_VOL,
 )
 
 BULLISH_TO = ("buy", "outperform", "overweight", "strong-buy", "strong buy", "positive", "accumulate", "market outperform")
@@ -70,13 +71,20 @@ def rating_counts_of(row: dict) -> tuple[int, int, int] | None:
     return buy, hold, sell
 
 
-def consensus_shape_exclusions(row: dict) -> list[str]:
-    """The brief: a big stack of buys, almost no holds, no sells."""
+def consensus_shape_exclusions(row: dict, rule: str | None = None) -> list[str]:
+    """The consensus requirement. "shape" is the brief: a big stack of buys, almost no
+    holds, no sells. "share" asks for a share of buy ratings instead, whatever the count."""
     counts = rating_counts_of(row)
     if counts is None:
         return ["no analyst rating breakdown"]
     buy, hold, sell = counts
     out = []
+    if (rule or CONSENSUS_RULE) == "share":
+        total = buy + hold + sell
+        share = buy / total if total else 0
+        if share < MIN_BUY_SHARE:
+            out.append(f"{share:.0%} buy ratings (need {MIN_BUY_SHARE:.0%}+)")
+        return out
     if buy < MIN_BUY_RATINGS:
         out.append(f"only {buy} buy ratings (need {MIN_BUY_RATINGS}+)")
     if hold > MAX_HOLD_RATINGS:
@@ -86,7 +94,7 @@ def consensus_shape_exclusions(row: dict) -> list[str]:
     return out
 
 
-def hard_exclusions(row: dict) -> list[str]:
+def hard_exclusions(row: dict, rule: str | None = None) -> list[str]:
     reasons = []
     v = row.get("vol_20d_annualized")
     if v is not None and v > MAX_VOL_ANNUAL:
@@ -100,7 +108,7 @@ def hard_exclusions(row: dict) -> list[str]:
     ac = row.get("analyst_count")
     if ac is not None and ac < MIN_ANALYSTS:
         reasons.append(f"only {int(ac)} analysts")
-    reasons += consensus_shape_exclusions(row) if row.get("rating_counts") else []
+    reasons += consensus_shape_exclusions(row, rule) if row.get("rating_counts") else []
     return reasons
 
 
@@ -377,6 +385,67 @@ def _money(value: float, currency: str | None = None) -> str:
     return f"{prefix}{value:,.0f}"
 
 
+def outlook_vol(p: dict, mode: str | None = None) -> float | None:
+    """The annual volatility the ranges are built from."""
+    v20, v1y = p.get("vol_20d_annualized"), p.get("vol_1y_annualized")
+    mode = mode or OUTLOOK_VOL
+    if mode == "20d" or v1y is None:
+        return v20
+    if v20 is None or mode == "1y":
+        return v1y
+    if mode == "max":
+        return max(v20, v1y)
+    return math.sqrt((v20 ** 2 + v1y ** 2) / 2)
+
+
+def cap_per_sector(tickers: list[str], sector_of: dict, cap: int | None
+                   ) -> tuple[list[str], dict[str, str]]:
+    """Keep the order, but no more than `cap` from any one sector. Returns the kept list
+    and, for each dropped ticker, the reason."""
+    if not cap:
+        return list(tickers), {}
+    seen: dict[str, int] = {}
+    kept, dropped = [], {}
+    for t in tickers:
+        sector = sector_of.get(t)
+        if not sector:          # unknown is not a sector: never cap stocks together on it
+            kept.append(t)
+            continue
+        if seen.get(sector, 0) >= cap:
+            dropped[t] = f"sector cap: {cap} {sector} stocks already ahead of it"
+            continue
+        seen[sector] = seen.get(sector, 0) + 1
+        kept.append(t)
+    return kept, dropped
+
+
+def company_key(name: str | None) -> str:
+    """A company's name with share-class and legal suffixes stripped, so GOOG and GOOGL,
+    or BRK-A and BRK-B, are recognised as one company."""
+    key = (name or "").lower()
+    key = re.sub(r"\b(class|cl\.?|series)\s+[a-c]\b", " ", key)
+    key = re.sub(r"[^a-z0-9 ]", " ", key)
+    key = re.sub(r"\b(inc|incorporated|corp|corporation|co|company|ltd|limited|plc|"
+                 r"holdings?|group|sa|nv|ag|se|the|common|stock|shares?|ordinary|"
+                 r"capital)\b", " ", key)
+    return " ".join(key.split())
+
+
+def one_per_company(tickers: list[str], company_of: dict) -> tuple[list[str], dict[str, str]]:
+    """Keep the first (best-ranked) listing of each company."""
+    seen: dict[str, str] = {}
+    kept, dropped = [], {}
+    for t in tickers:
+        key = company_key(company_of.get(t))
+        if key and key in seen:
+            dropped[t] = f"same company as {seen[key]}, which ranks higher"
+            continue
+        if key:
+            seen[key] = t
+        kept.append(t)
+    return kept, dropped
+
+
 def price_outlook(d: dict, p: dict, b: dict) -> dict:
     """Where the price could be tomorrow, next week and next month - with the evidence.
 
@@ -391,7 +460,7 @@ def price_outlook(d: dict, p: dict, b: dict) -> dict:
         volatility compares to the move being hoped for.
     """
     price = p.get("last_close") or d.get("price") or b.get("price")
-    vol_annual = p.get("vol_20d_annualized")
+    vol_annual = outlook_vol(p)
     if not price:
         return {}
 
@@ -434,7 +503,7 @@ def price_outlook(d: dict, p: dict, b: dict) -> dict:
             "evidence": [],
         }
         ev = row["evidence"]
-        ev.append(f"20-day realised volatility is {vol_annual * 100:.0f}% a year, which over "
+        ev.append(f"Realised volatility ({OUTLOOK_VOL}) is {vol_annual * 100:.0f}% a year, which over "
                   f"{days} trading day{'s' if days > 1 else ''} is a typical move of "
                   f"±{sigma * 100:.1f}%")
         if days_to_earnings is not None and days_to_earnings <= days:
@@ -521,12 +590,14 @@ def risk_notes(d: dict, p: dict, flags: list[str]) -> list[str]:
     return out
 
 
-def final_scores(finalists: list[str], bulk: dict, prices: dict, detail: dict, upgrades: dict[str, list[dict]]) -> pd.DataFrame:
+def final_scores(finalists: list[str], bulk: dict, prices: dict, detail: dict,
+                 upgrades: dict[str, list[dict]], rule: str | None = None,
+                 sector_cap: int | None = MAX_PER_SECTOR) -> pd.DataFrame:
     rows = []
     for t in finalists:
         b, p, d = bulk.get(t, {}), prices.get(t, {}), detail.get(t, {})
         merged = {**b, **p, **d}
-        excl = hard_exclusions(merged)
+        excl = hard_exclusions(merged, rule)
         rows.append({"ticker": t, "b": b, "p": p, "d": d, "excluded": "; ".join(excl), "ret_1m": p.get("ret_1m")})
     df = pd.DataFrame(rows)
     if df.empty:
@@ -555,7 +626,7 @@ def final_scores(finalists: list[str], bulk: dict, prices: dict, detail: dict, u
             "risk_notes": risk_notes(d, p, flags),
             "company": b.get("company") or "",
             "exchange": b.get("exchange"),
-            "sector": b.get("sector"),
+            "sector": d.get("sector") or b.get("sector"),
             "price": p.get("last_close") or d.get("price") or b.get("price"),
             "score": round(100 * score, 1),
             "excluded": r["excluded"],
@@ -581,5 +652,15 @@ def final_scores(finalists: list[str], bulk: dict, prices: dict, detail: dict, u
         })
     res = pd.DataFrame(out)
     res = res.sort_values(["excluded", "score"], ascending=[True, False]).reset_index(drop=True)
-    res["rank"] = np.where(res["excluded"] == "", np.arange(1, len(res) + 1), 0)
+    # One sector falling can take a third of an uncapped list with it, so the ranking keeps
+    # no more than sector_cap from any one sector and says why the rest were dropped.
+    eligible = res.loc[res["excluded"] == "", "ticker"].tolist()
+    eligible, twins = one_per_company(eligible, dict(zip(res["ticker"], res["company"])))
+    _, dropped = cap_per_sector(eligible, dict(zip(res["ticker"], res["sector"])), sector_cap)
+    dropped.update(twins)
+    if dropped:
+        res["excluded"] = [dropped.get(t, e) for t, e in zip(res["ticker"], res["excluded"])]
+        res = res.sort_values(["excluded", "score"], ascending=[True, False]).reset_index(drop=True)
+    ranked = (res["excluded"] == "").to_numpy()
+    res["rank"] = np.where(ranked, np.cumsum(ranked), 0)
     return res

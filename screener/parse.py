@@ -88,6 +88,13 @@ def parse_overview(html: str) -> dict:
 
     d["marketrank_percentile"] = _num(txt, r"(\d+)(?:st|nd|rd|th) Percentile Overall Score")
     d["sector_rank"] = _grab(txt, r"ranked (\d+\w* out of \d+ stocks in the [^.]+ sector)")
+    m = re.search(r"in the ([a-z][a-z &/,-]*?) sector", d["sector_rank"] or "")
+    d["sector"] = m.group(1).title() if m else None
+    h1 = soup.find("h1")
+    heading = h1.get_text(" ", strip=True) if h1 else ""
+    d["company"] = heading.split(" (")[0].strip() or None
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    d["is_fund"] = "Holdings" in title and ("ETF" in title or "Fund" in title)
 
     def sub(label):
         return _num(txt, re.escape(label) + r"\n([\d.]+) / 5")
@@ -192,6 +199,24 @@ def parse_forecast(html: str) -> dict:
             return counts
         d["rating_counts"] = snapshot(1)
         d["rating_counts_1m_ago"] = snapshot(2)
+        # MarketBeat's own counts as they stood 1 month, 3 months and a year ago. Each
+        # column is labelled with its twelve-month window, which ends on the snapshot date.
+        official = []
+        for col, head in enumerate(heads[1:], start=1):
+            m = re.search(r"to\s+(\d{1,2})/(\d{1,2})/(\d{2,4})", head)
+            if not m:
+                continue
+            month, day, year = (int(g) for g in m.groups())
+            year += 2000 if year < 100 else 0
+            counts = snapshot(col)
+            target = next((parse_number(r[col]) for r in rows
+                           if r[0].strip().lower().startswith("consensus price target")
+                           and len(r) > col), None)
+            rating = next((r[col].strip() for r in rows
+                           if r[0].strip().lower() == "consensus rating" and len(r) > col), None)
+            official.append({"asof": f"{year:04d}-{month:02d}-{day:02d}", "counts": counts,
+                             "target": target, "rating": rating})
+        d["official_snapshots"] = official
 
     hist = []
     heads, rows = _table_rows(soup, "Date")
@@ -211,7 +236,7 @@ def parse_forecast(html: str) -> dict:
             "target_from": parse_number(m_pt[0]) if len(m_pt) > 1 else None,
             "target_to": parse_number(m_pt[-1]) if m_pt else None,
         })
-    d["ratings_history"] = hist[:60]
+    d["ratings_history"] = hist
     return d
 
 

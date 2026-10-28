@@ -95,7 +95,6 @@ BULLISH_RATINGS = {"strong buy", "buy", "moderate buy"}
 MIN_ANALYSTS = 3
 
 # Stage C
-YF_BATCH = 250
 PRELIM_FINALISTS = 250
 
 # Detail pages fetched per finalist
@@ -108,6 +107,40 @@ DETAIL_WORKERS = 4
 MIN_BUY_RATINGS = 20
 MAX_HOLD_RATINGS = 3
 MAX_SELL_RATINGS = 0
+# The ratio every listed stock must show, in the menu list and on MarketBeat's own counts:
+# at least this share of analysts saying buy, and no sells. AMD at 34 buy / 8 hold / 1 sell
+# (79%) is the kind of "Moderate Buy" this keeps out.
+MIN_LIST_BUY_SHARE = 0.90
+MAX_LIST_SELLS = 0
+
+# Fixes from the 2026-10-15 backtest. Each is a switch so the time-travel test
+# (python run.py timetravel) can replay the old rules against the new with the same code.
+#
+# CONSENSUS_RULE "shape" is the brief above (20+ buys, <=3 holds, 0 sells). "share" asks
+# instead for MIN_BUY_SHARE of the analysts to say buy, however many there are - the only
+# consensus signal the backtest found any edge in.
+# Kept on "shape". The time-travel replay made "share" look spectacular (+102% over the
+# year against the S&P's +11.9%), but the 95% rule mostly selects thinly covered smaller
+# stocks, and those beat the market that year whatever their rating - helped by the sample
+# being drawn from today's $2B+ listings, which keeps the small caps that soared and drops
+# the ones that collapsed. Against peers with the same number of analysts, 95%-buy stocks
+# won at 3-10 analysts and lost at 11-20, none of it significant. A second replay on a
+# different sample reversed the ranking (old +73.7%, 95% rule +24.3%): no rule's edge
+# survives a change of sample. See homework.txt 7.4b.
+CONSENSUS_RULE = "shape"
+MIN_BUY_SHARE = 0.95
+# No more than this many picks from one sector. On 2026-10-06 five of the top eight were
+# chip and AI-hardware names, and they fell together.
+MAX_PER_SECTOR = 3
+# Volatility behind the tomorrow / next week / next month ranges. "blend" is the
+# root-mean-square of 20-day and one-year volatility, "max" the larger of the two, "1y" the
+# year alone. Measured by `run.py timetravel` over 5,737 stock-weeks (2025-10 to 2026-09),
+# share of next-week closes inside each band, against targets of 68.3% and 95.4%:
+#     20d    65.0% / 90.6%     (the original - too narrow, especially in the tails)
+#     1y     68.9% / 93.8%     <- closest on both
+#     max    72.3% / 95.1%
+#     blend  67.5% / 93.3%
+OUTLOOK_VOL = "1y"
 
 # Price preference. Not a hard cut - stocks below this are ranked down, not removed.
 FOCUS_MIN_PRICE = 75.0
@@ -128,12 +161,6 @@ WEIGHTS = {
     "risk": 0.15,
 }
 
-# yfinance throttling: a collapsing batch hit rate means Yahoo is refusing, not that the symbols
-# are bad, so pause and retry those tickers on a later pass instead of recording them as missing.
-THROTTLE_HIT_RATE = 0.70
-THROTTLE_SLEEP_SEC = 60
-YF_MAX_PASSES = 3
-
 # Only used to show an ETA during the sweep; a full run has taken 19 pages.
 SWEEP_EXPECTED_PAGES = 19
 
@@ -142,7 +169,10 @@ SWEEP_EXPECTED_PAGES = 19
 # finalist through the visible browser rather than fetching its HTML directly.
 SCROLL_PAGES = True
 LIVE_DETAIL = True
-# Start every run from an empty store, so nothing is carried over between runs.
+# Start every run from an empty store, so nothing is carried over between runs: every stock
+# and its price chart is read from MarketBeat again, even if a run already read it today.
+# Price and rating history, backtests and holdings are still kept. False makes a second run
+# the same day resume from what is saved instead.
 WIPE_ON_RUN = True
 
 # How many Chrome tabs browse in parallel during the live read. Each still opens and

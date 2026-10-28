@@ -1,21 +1,21 @@
-"""Technical analysis computed here, from MarketBeat's own end-of-day price history.
-
-Every number below comes from MarketBeat: the closes come from its chart feed
-(mb_prices.py) and the volume, range and beta figures come from its screener columns.
-Nothing is sourced from another data provider.
+"""Technical analysis computed here, from MarketBeat's end-of-day closing prices.
 
   MACD            Appel - trend direction and momentum turns
-  RSI             Wilder - momentum, cross-checked against MarketBeat's own RSI column
+  RSI             Wilder - momentum
   Bollinger %B    Bollinger - where price sits inside its own volatility envelope
-  Realised vol    close-to-close, standing in for ATR
+  ATR             Wilder - the average true daily range, from real highs and lows
+  ADX / DI        Wilder - how strong the trend is, and which way it points
+  OBV             Granville - whether volume is flowing in with the price or against it
+  Realised vol    close-to-close
   Sharpe          return per unit of volatility over the window
-  Relative volume MarketBeat's column - does volume back the move
-  52-week position where price sits in MarketBeat's published range
-  Relative strength against the S&P 500, itself taken from MarketBeat
+  Relative volume does volume back the move
+  52-week position where price sits in its published range
+  Relative strength against the S&P 500
 
-ATR, ADX and OBV are deliberately absent: they need intraday highs, lows and daily
-volume, which MarketBeat's chart feed does not carry. Approximating them from closes
-would look like analysis while being something else.
+ATR, ADX and OBV need intraday highs, lows and daily volume. MarketBeat's chart carries
+closes only, so they are computed only when a caller passes a frame with real highs, lows
+and volume: when closes stand in for them, the true range collapses to the close-to-close
+move and understates a stock's daily swing by about a third, so they are skipped, not faked.
 """
 from dataclasses import dataclass, field
 
@@ -95,19 +95,54 @@ def sharpe(close: pd.Series, periods: int = 63) -> float | None:
     return float(rets.mean() / rets.std() * np.sqrt(252))
 
 
+def has_real_ranges(ohlcv: pd.DataFrame | None) -> bool:
+    """True when highs and lows are genuine, not closes standing in for them."""
+    if ohlcv is None or ohlcv.empty or not {"High", "Low", "Close"} <= set(ohlcv.columns):
+        return False
+    tail = ohlcv.tail(60)
+    return bool(((tail["High"] - tail["Low"]).abs() > 1e-9).mean() > 0.8)
+
+
+def wilder(series: pd.Series, n: int = 14) -> pd.Series:
+    return series.ewm(alpha=1 / n, adjust=False).mean()
+
+
+def atr(ohlcv: pd.DataFrame, n: int = 14) -> pd.Series:
+    high, low, close = ohlcv["High"], ohlcv["Low"], ohlcv["Close"]
+    prev = close.shift(1)
+    true_range = pd.concat([high - low, (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+    return wilder(true_range, n)
+
+
+def adx(ohlcv: pd.DataFrame, n: int = 14) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """ADX with its +DI and -DI lines."""
+    high, low = ohlcv["High"], ohlcv["Low"]
+    up, down = high.diff(), -low.diff()
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+    rng = atr(ohlcv, n)
+    plus_di = 100 * wilder(plus_dm, n) / rng
+    minus_di = 100 * wilder(minus_dm, n) / rng
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    return wilder(dx, n), plus_di, minus_di
+
+
+def obv(ohlcv: pd.DataFrame) -> pd.Series:
+    direction = np.sign(ohlcv["Close"].diff()).fillna(0)
+    return (direction * ohlcv["Volume"].fillna(0)).cumsum()
+
+
 def _last(series: pd.Series) -> float | None:
     s = series.dropna()
     return float(s.iloc[-1]) if len(s) else None
 
 
 def analyse(ticker: str, closes: pd.Series, benchmark: pd.Series | None = None,
-            mb_row: dict | None = None) -> Analysis:
-    """Every indicator below is computed from MarketBeat's own end-of-day closes.
+            mb_row: dict | None = None, ohlcv: pd.DataFrame | None = None) -> Analysis:
+    """Every indicator below is computed from end-of-day prices.
 
-    MarketBeat's chart feed carries closes only - no open/high/low and no daily volume - so
-    the indicators that need those (ATR, ADX, OBV) are not computed. Where MarketBeat
-    publishes an equivalent figure in its screener columns (relative volume, 52-week range,
-    beta), that value is used instead and labelled as coming from MarketBeat.
+    Pass `ohlcv` (Open/High/Low/Close/Volume) to get ATR, ADX and OBV as well; without it,
+    or when its highs and lows are not real, those three are left out.
     """
     out = Analysis(ticker=ticker)
     closes = closes.dropna().astype(float)
@@ -170,7 +205,43 @@ def analyse(ticker: str, closes: pd.Series, benchmark: pd.Series | None = None,
             0.9 if 0.5 <= pct_b <= 0.85 else 0.5 if pct_b > 0.85 else 0.55 if pct_b >= 0.3 else 0.3,
             f"band width {(up_v - lo_v) / price * 100:.1f}% of price"))
 
-    # Close-to-close realised volatility stands in for ATR, which needs highs and lows.
+    if has_real_ranges(ohlcv):
+        bars = ohlcv.dropna(subset=["High", "Low", "Close"]).astype(float)
+        atr_v = _last(atr(bars))
+        if atr_v:
+            atr_pct = atr_v / price * 100
+            signals.append(Signal(
+                "ATR (14)", atr_pct,
+                f"true daily range {atr_pct:.1f}% of price",
+                0.6 if atr_pct < 2.5 else 0.5 if atr_pct < 4 else 0.35,
+                f"a 2-ATR stop sits {price - 2 * atr_v:,.2f}"))
+        adx_s, plus_di, minus_di = adx(bars)
+        adx_v, pdi, mdi = _last(adx_s), _last(plus_di), _last(minus_di)
+        if adx_v is not None and pdi is not None and mdi is not None:
+            rising = pdi > mdi
+            strong = adx_v >= 25
+            signals.append(Signal(
+                "ADX (14)", adx_v,
+                ("strong uptrend" if strong and rising else
+                 "strong downtrend" if strong else
+                 "weak trend, drifting up" if rising else "weak trend, drifting down"),
+                0.85 if strong and rising else 0.15 if strong else 0.55 if rising else 0.4,
+                f"+DI {pdi:.0f} against -DI {mdi:.0f}"))
+        if "Volume" in bars and bars["Volume"].tail(40).sum() > 0:
+            flow = obv(bars)
+            if len(flow) > 21:
+                obv_up = flow.iloc[-1] > flow.iloc[-21]
+                price_up = closes.iloc[-1] > closes.iloc[-21]
+                signals.append(Signal(
+                    "OBV (20d)", float(flow.iloc[-1] - flow.iloc[-21]),
+                    ("volume confirming the rise" if obv_up and price_up else
+                     "rising on fading volume" if price_up else
+                     "volume accumulating into weakness" if obv_up else
+                     "volume confirming the fall"),
+                    0.8 if obv_up and price_up else 0.45 if price_up else
+                    0.55 if obv_up else 0.2,
+                    "on-balance volume over the last month"))
+
     rets = closes.pct_change().dropna()
     vol20 = float(rets.tail(20).std() * np.sqrt(252)) if len(rets) >= 20 else None
     if vol20 is not None:
